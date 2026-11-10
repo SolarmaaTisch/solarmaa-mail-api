@@ -22,9 +22,9 @@ Manuell per SSH: `sudo solarmaa-update`
 
 Nächtliche automatische Prüfung (optional): `sudo ./pi/install.sh --auto-update`. Sie läuft um etwa 03:17 Uhr, mit Zufallsverzögerung, damit nicht alle Anlagen gleichzeitig laden.
 
-### Zugang zum privaten Repository
+### Zugang zum Repository
 
-Das Repository ist privat. Damit der Pi Updates holen kann, braucht er einen **Deploy-Key mit Nur-Lese-Recht**:
+Solange das Repository öffentlich ist, holt der Pi Updates ohne Zugangsdaten. Wird es auf privat gestellt, braucht jeder Pi einen **Deploy-Key mit Nur-Lese-Recht**:
 
 ```bash
 sudo ssh-keygen -t ed25519 -N "" -f /root/.ssh/solarmaa_deploy

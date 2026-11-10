@@ -19,7 +19,7 @@ Für Solarmaa-Monteure. Dauer vor Ort mit vorbereitetem Gerät: grob eine Stunde
    cd solarmaa-mail-api
    sudo ./pi/install.sh
    ```
-   Das Repository ist privat: Für `git clone` braucht es einen GitHub-Zugang (Deploy-Key oder Token). Alternativ den Ordner vom Laptop kopieren: `scp -r solarmaa-mail-api <benutzer>@solarmaa-muster.local:~`
+   Ist das Repository öffentlich, braucht es dafür kein GitHub-Konto auf dem Pi. Wird es auf privat gestellt, braucht der Pi einen Zugang (siehe [Wartung](07-wartung-und-updates.md)) oder man kopiert den Ordner vom Laptop: `scp -r solarmaa-mail-api <benutzer>@solarmaa-muster.local:~`
 4. Konfiguration für den Kunden ausfüllen: `sudo nano /etc/solarmaa-dash/config.toml`
    - `[anlage]`: Name, kWp, Datum der Inbetriebnahme
    - `[installateur]`: Telefon und E-Mail von Solarmaa
