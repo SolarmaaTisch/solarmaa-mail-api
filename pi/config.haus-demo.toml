@@ -1,0 +1,68 @@
+# Demo-Konfiguration: Mehrfamilienhaus mit 8 Einheiten, simulierten Zählern und Beispielrechnungen.
+# Start:  cd pi && python3 -m solarmaa_dash run -c config.haus-demo.toml --db ./demo.db --port 8080
+# Demo-Logins: solarmaa / verwaltung / mieter, Passwort demo-passwort
+
+[anlage]
+name = "MFH Beispielstrasse 12, Biel"
+kwp = 71.8
+[quelle]
+typ = "demo"
+intervall_s = 5
+[haus]
+aktiv = true
+demo = true
+name = "MFH Beispielstrasse 12"
+geschosse = ["UG", "EG", "1. OG", "2. OG", "DG"]
+intervall_s = 5
+[[haus.einheit]]
+id = "allgemein"
+name = "Allgemein"
+geschoss = "UG"
+typ = "allgemein"
+[[haus.einheit.zaehler]]
+name = "Allgemeinzähler"
+[[haus.einheit]]
+id = "eg-links"
+name = "Wohnung EG links"
+geschoss = "EG"
+[[haus.einheit.zaehler]]
+name = "Wohnungszähler"
+[[haus.einheit]]
+id = "eg-rechts"
+name = "Wohnung EG rechts"
+geschoss = "EG"
+[[haus.einheit.zaehler]]
+name = "Wohnungszähler"
+[[haus.einheit]]
+id = "og1-links"
+name = "Wohnung 1. OG links"
+geschoss = "1. OG"
+[[haus.einheit.zaehler]]
+name = "Wohnungszähler"
+[[haus.einheit]]
+id = "og1-rechts"
+name = "Wohnung 1. OG rechts"
+geschoss = "1. OG"
+[[haus.einheit.zaehler]]
+name = "Wohnungszähler"
+[[haus.einheit.zaehler]]
+name = "Wärmepumpe"
+[[haus.einheit]]
+id = "og2-links"
+name = "Wohnung 2. OG links"
+geschoss = "2. OG"
+[[haus.einheit.zaehler]]
+name = "Wohnungszähler"
+[[haus.einheit]]
+id = "og2-rechts"
+name = "Praxis 2. OG"
+geschoss = "2. OG"
+typ = "gewerbe"
+[[haus.einheit.zaehler]]
+name = "Gewerbezähler"
+[[haus.einheit]]
+id = "dg"
+name = "Attika"
+geschoss = "DG"
+[[haus.einheit.zaehler]]
+name = "Wohnungszähler"

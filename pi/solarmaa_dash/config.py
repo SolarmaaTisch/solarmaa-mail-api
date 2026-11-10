@@ -31,6 +31,11 @@ DEFAULTS: dict = {
         "verguetung_rp": None,
         "co2_kg_pro_kwh": None,
     },
+    # Optional, neue Form: Liste von Geräten. Ersetzt [quelle.wechselrichter/zaehler/speicher].
+    "geraet": [],
+    "smartme": {"basis_url": "https://api.smart-me.com", "api_key": "", "benutzer": "", "passwort": "",
+                "cache_s": 30},
+    "haus": {"aktiv": False},
     "server": {"host": "0.0.0.0", "port": 80, "app_pfad": ""},
     "daten": {"pfad": "/var/lib/solarmaa-dash/data.db", "aufbewahrung_tage": 800},
 }
@@ -55,6 +60,9 @@ def load(path: str | Path | None) -> dict:
     typ = cfg["quelle"]["typ"]
     if typ not in ("demo", "sunspec"):
         raise ValueError(f"quelle.typ muss 'demo' oder 'sunspec' sein, nicht {typ!r}")
-    if typ == "sunspec" and not cfg["quelle"]["wechselrichter"]["host"]:
+    for g in cfg["geraet"]:
+        if not g.get("typ"):
+            raise ValueError(f"[[geraet]] {g.get('name', '?')}: typ fehlt")
+    if typ == "sunspec" and not cfg["geraet"] and not cfg["quelle"]["wechselrichter"]["host"]:
         raise ValueError("Für quelle.typ = 'sunspec' fehlt quelle.wechselrichter.host")
     return cfg

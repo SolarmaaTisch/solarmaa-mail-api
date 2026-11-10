@@ -1,0 +1,7 @@
+[Unit]
+Description=Solarmaa Dashboard: Update installieren
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/solarmaa-update

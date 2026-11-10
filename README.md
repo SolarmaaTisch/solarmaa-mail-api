@@ -1,6 +1,10 @@
 # Solarmaa Energie-Dashboard
 
-Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf der Hutschiene im Verteiler liest Wechselrichter, Zähler und Speicher über Modbus TCP (SunSpec) aus und zeigt alles als App im Browser von Handy, Tablet oder PC. Lokal, ohne Cloud.
+Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf der Hutschiene im Verteiler liest Wechselrichter, Zähler und Speicher aus und zeigt alles als App im Browser von Handy, Tablet oder PC. Lokal, ohne Cloud.
+
+- Geräte: SunSpec (viele Hersteller), Fronius, Huawei, GoodWe, Sigenergy, Shelly, smart-me; Erkennung automatisch
+- Mehrfamilienhaus/ZEV: Hausskizze mit anklickbaren Zählern, Login mit Rollen, Rechnungen aus smart-me
+- Wartung im Browser: Web-Update mit Testlauf, Gerätestatus
 
 | Dokument | Inhalt |
 |---|---|
@@ -9,6 +13,8 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 | [Einbauanleitung](docs/03-einbauanleitung.md) | Werkstatt-Vorbereitung, Einbau im Verteiler, Übergabe |
 | [Inbetriebnahme](docs/04-inbetriebnahme.md) | Pi-Programm einrichten, Wechselrichter verbinden, Fehlersuche, API |
 | [Kurzanleitung Kunde](docs/05-kunden-kurzanleitung.md) | Einseitige Anleitung zum Abgeben |
+| [Haus und Abrechnung](docs/06-haus-und-abrechnung.md) | Hausskizze, Rollen und Login, smart-me, Rechnungen |
+| [Wartung und Updates](docs/07-wartung-und-updates.md) | Web-Update, Fernzugriff, Geräteerkennung |
 
 ## Schnellstart (Demo auf dem eigenen Rechner)
 
@@ -21,7 +27,16 @@ python3 -m solarmaa_dash run --port 8080 --db ./demo.db
 
 Ohne Konfigurationsdatei läuft der Demo-Modus. Dann http://localhost:8080 öffnen.
 
-Nur die App ohne Pi ansehen: `app/index.html?demo` im Browser öffnen.
+Mit Beispielhaus (8 Einheiten, Rechnungen, Login `solarmaa` / `verwaltung` / `mieter`, Passwort `demo-passwort`):
+
+```bash
+cd pi
+python3 -m solarmaa_dash run -c config.haus-demo.toml --db ./haus-demo.db --port 8080
+```
+
+Dann http://localhost:8080/haus.html öffnen.
+
+Nur die App ohne Pi ansehen: `app/index.html?demo` bzw. `app/haus.html?demo` im Browser öffnen.
 
 ## Auf dem Raspberry Pi
 

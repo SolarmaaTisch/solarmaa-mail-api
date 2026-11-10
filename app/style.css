@@ -180,3 +180,5 @@ button { font: inherit; color: inherit; }
 .foot { border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
 .foot-inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; padding-block: 20px 28px; font-size: 0.88rem; }
 .foot-title { font-weight: 600; margin-bottom: 2px; }
+.link-btn { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 0.84rem; color: var(--ink); text-decoration: none; }
+.link-btn:hover { border-color: var(--violet); }

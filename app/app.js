@@ -178,6 +178,10 @@
     if (g && g.seit && g.pv_wh > 0) {
       $("totals").textContent = `Seit ${fromIso(g.seit).toLocaleDateString(LOCALE)} produziert: ${nf0.format(g.pv_wh / 1000)} kWh`;
     }
+    if ((i.haus && i.haus.aktiv) || i.demo) {
+      $("hausLinkBox").hidden = false;
+      if (i.demo && !(i.haus && i.haus.aktiv)) $("hausLink").href = "haus.html?demo";
+    }
     const inst = i.installateur;
     $("instName").textContent = inst.name;
     $("instContact").textContent = [inst.telefon, inst.email, inst.web].filter(Boolean).join(" · ");

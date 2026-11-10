@@ -20,7 +20,26 @@ Menünamen ändern sich mit der Firmware. Pro Gerätetyp, den Solarmaa verbaut, 
 
 Im Router eine DHCP-Reservation für den Pi und für den Wechselrichter anlegen. Sonst ändert sich die Adresse nach einem Router-Neustart und der Pi findet den Wechselrichter nicht mehr.
 
-## 3. Gerät scannen
+## 3. Geräte automatisch erkennen
+
+```bash
+cd /opt/solarmaa-dash/pi
+sudo -u solarmaa-dash python3 -m solarmaa_dash erkennen -c /etc/solarmaa-dash/config.toml --toml /tmp/vorschlag.toml
+```
+
+Der Pi sucht im eigenen Netz (/24) nach Shelly, Fronius (Solar API), SunSpec-Geräten (verschiedene Unit-IDs), Huawei, GoodWe und Sigenergy (über die `[erkennung]`-Regeln in den Profilen) sowie nach allen Zählern im smart-me-Konto. Das Ergebnis ist eine Tabelle und ein Vorschlag für die `[[geraet]]`-Blöcke. Dasselbe gibt es im Browser unter Wartung → «Geräte im Netz suchen».
+
+Was die Erkennung **nicht** sicher weiss: wofür ein Shelly misst (Netzanschluss, PV-Abgang oder eine Wohnung). Rollen im Vorschlag prüfen, dann in die Konfiguration übernehmen.
+
+Danach alle Geräte einmal lesen:
+
+```bash
+sudo -u solarmaa-dash python3 -m solarmaa_dash geraet-test -c /etc/solarmaa-dash/config.toml
+```
+
+Jede Zeile beginnt mit `OK` oder `FEHLER` und zeigt die gelesenen Werte. Profile mit `geprueft = false` hier besonders genau mit der Hersteller-App vergleichen.
+
+## 3b. Einzelnes SunSpec-Gerät scannen
 
 ```bash
 cd /opt/solarmaa-dash/pi
@@ -40,7 +59,9 @@ Den Zähler suchen: Bei vielen Anlagen hängt er am Wechselrichter und erscheint
 
 Erscheint «Kein SunSpec-Marker gefunden», ist Modbus TCP nicht aktiv, die Unit-ID falsch oder das Gerät unterstützt kein SunSpec (siehe Konzept, Kompatibilität).
 
-## 4. Konfiguration eintragen
+## 4. Konfiguration eintragen (alte Kurzform)
+
+Die neue Form mit `[[geraet]]`-Blöcken steht in `pi/config.example.toml` (Beispiele A bis D). Die bisherige Kurzform funktioniert weiterhin:
 
 ```bash
 sudo nano /etc/solarmaa-dash/config.toml
@@ -99,16 +120,25 @@ cd ~/solarmaa-mail-api && git pull && sudo ./pi/install.sh
 
 Die Konfiguration bleibt erhalten, die Messwerte auch.
 
+## Neues Gerät ohne Programmierung anbinden
+
+Für einen Wechselrichter mit bekannter Modbus-Registerliste eine Datei in `pi/solarmaa_dash/profile/` anlegen (Vorlage: `huawei_sun2000.toml`). Pro Messwert Register, Typ (`u16`, `i16`, `u32`, `i32`, `f32`) und Faktor eintragen. Ein `[erkennung]`-Abschnitt (Register mit Modellnamen) lässt die automatische Erkennung das Gerät finden. Nach dem Test an einer echten Anlage `geprueft = true` setzen.
+
 ## Was das Programm macht
 
 | Datei | Aufgabe |
 |---|---|
 | `pi/solarmaa_dash/modbus.py` | Modbus-TCP-Client (nur Lesen, Funktion 3), ohne Fremdbibliothek |
 | `pi/solarmaa_dash/sunspec.py` | Findet die SunSpec-Modelle eines Geräts, liest Leistung, Zählerstände, Ladezustand |
-| `pi/solarmaa_dash/sources.py` | Datenquelle `sunspec` oder `demo`; einheitliche Vorzeichen |
+| `pi/solarmaa_dash/sources.py` | kombiniert alle Geräte zu einem Anlagen-Messwert; Demo-Simulation |
+| `pi/solarmaa_dash/geraete/` | Adapter: SunSpec, Fronius, Shelly, smart-me, Modbus-Profil |
+| `pi/solarmaa_dash/profile/*.toml` | Registerprofile: Huawei, GoodWe, Sigenergy, smart-me lokal (Vorlage) |
+| `pi/solarmaa_dash/erkennung.py` | automatische Geräteerkennung im Netz |
+| `pi/solarmaa_dash/haus.py` | Einheiten, Hauszähler, Solaranteil pro Einheit |
+| `pi/solarmaa_dash/auth.py` · `rechnungen.py` · `wartung.py` | Login und Rollen, Rechnungsimport, Web-Update |
 | `pi/solarmaa_dash/store.py` | SQLite: Minutenwerte, Tagessummen, Eigenverbrauch und Autarkie |
 | `pi/solarmaa_dash/server.py` | Webserver: App ausliefern, JSON-API, Live-Stream |
-| `pi/solarmaa_dash/__main__.py` | Befehle `run`, `scan`, `read`; Abfrageschleife mit Wiederholung bei Fehlern |
+| `pi/solarmaa_dash/__main__.py` | Befehle `run`, `erkennen`, `geraet-test`, `scan`, `read`, `smartme-liste`, `benutzer`, `rechnungen-import` |
 
 API für eigene Auswertungen:
 

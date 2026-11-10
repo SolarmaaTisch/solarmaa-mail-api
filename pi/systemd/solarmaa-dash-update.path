@@ -1,0 +1,8 @@
+[Unit]
+Description=Solarmaa Dashboard: Update-Anfrage aus der Weboberfläche
+
+[Path]
+PathExists=/var/lib/solarmaa-dash/update-anfrage
+
+[Install]
+WantedBy=multi-user.target

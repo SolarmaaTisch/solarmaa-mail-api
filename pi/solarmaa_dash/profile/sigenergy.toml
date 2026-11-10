@@ -1,0 +1,41 @@
+# Sigenergy SigenStor / Sigen Hybrid, Anlagen-Ebene (Plant), Modbus TCP
+#
+# Quelle der Register: Open-Source-Integration «Sigenergy-Local-Modbus» (TypQxQ),
+# Datei modbusregisterdefinitions.py, nach Sigenergy Modbus-Protokoll. Port 502,
+# Plant-Unit-ID 247. Freischalten in der Sigen-App: Settings > System Settings >
+# Modbus TCP Server Settings > Enable. SigenStor braucht laut Integration Firmware SPC109+.
+#
+# UNGEPRÜFT an einer Solarmaa-Anlage: mit «geraet-test» vergleichen, dann geprueft = true.
+# Wortfolge der 32-Bit-Werte ist in der Quelle nicht angegeben (hier High-Word zuerst).
+
+name = "Sigenergy (Plant)"
+geprueft = false
+rolle = "anlage"
+funktion = 3
+wortfolge = "gross"
+
+[erkennung]            # Modelltyp als Text ab 30500 (aus Zusammenfassung, ungeprüft)
+units = [247]
+register = 30500
+laenge = 15
+muster = "(?i)sig"
+
+[werte.pv_w]           # Photovoltaic power, S32, Gain 1000 auf kW → Rohwert = W
+register = 30035
+typ = "i32"
+faktor = 1.0
+
+[werte.grid_w]         # Grid active power: > 0 Bezug, < 0 Einspeisung (wie Solarmaa-Konvention)
+register = 30005
+typ = "i32"
+faktor = 1.0
+
+[werte.battery_w]      # ESS power: > 0 Laden, < 0 Entladen → faktor -1 (Solarmaa: + Entladen)
+register = 30037
+typ = "i32"
+faktor = -1.0
+
+[werte.soc]            # ESS SOC, U16, Gain 10
+register = 30014
+typ = "u16"
+faktor = 0.1

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Solarmaa Haus</title>
+<meta name="theme-color" content="#b279d7">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="haus.css">
+</head>
+<body>
+<div class="demo-band" id="demoBand" hidden>Demo-Modus: Beispielhaus mit simulierten Werten und Beispielrechnungen</div>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand">
+      <span class="wordmark">solarmaa</span>
+      <span class="plant" id="hausName">Haus</span>
+    </div>
+    <nav class="top-nav">
+      <a href="index.html" class="link-btn" id="backLink">Anlage</a>
+      <span class="user-chip" id="userChip" hidden></span>
+      <button class="link-btn" id="logout" hidden>Abmelden</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap haus-main">
+  <!-- Anmeldung -->
+  <section class="login-card" id="loginView" hidden>
+    <h1>Anmelden</h1>
+    <p class="muted">Für Verbrauch, Rechnungen und Zähler Ihrer Einheit.</p>
+    <form id="loginForm" novalidate>
+      <label for="benutzer">Benutzername</label>
+      <input id="benutzer" name="benutzer" autocomplete="username" required>
+      <label for="passwort">Passwort</label>
+      <input id="passwort" name="passwort" type="password" autocomplete="current-password" required>
+      <p class="form-error" id="loginError" role="alert" hidden></p>
+      <button type="submit" class="btn-primary" id="loginBtn">Anmelden</button>
+    </form>
+    <p class="demo-hint muted" id="demoHint" hidden>Demo-Zugänge: <b>solarmaa</b>, <b>verwaltung</b> oder <b>mieter</b>, Passwort <b>demo-passwort</b></p>
+  </section>
+
+  <!-- Inhalt nach Login -->
+  <section id="appView" hidden>
+    <div class="tabs haus-tabs" role="tablist" aria-label="Bereich" id="tabs">
+      <button role="tab" id="tab-haus" data-view="haus" aria-selected="true">Haus</button>
+      <button role="tab" id="tab-rechnungen" data-view="rechnungen" aria-selected="false" hidden>Rechnungen</button>
+      <button role="tab" id="tab-wartung" data-view="wartung" aria-selected="false" hidden>Wartung</button>
+    </div>
+
+    <div class="view" id="view-haus">
+      <div class="haus-grid">
+        <div class="sketch-card">
+          <div class="section-head">
+            <h2>Hausübersicht</h2>
+            <span class="muted" id="stand">–</span>
+          </div>
+          <svg id="sketch" class="sketch" role="img" aria-label="Schematische Skizze des Hauses mit Zählern"></svg>
+          <div class="sketch-legend">
+            <span class="lg lg-pv">Solar</span>
+            <span class="lg lg-grid">Netz</span>
+            <span class="lg lg-meter">Zähler, antippen für Details</span>
+          </div>
+        </div>
+        <aside class="detail" id="detail" aria-live="polite">
+          <p class="muted detail-empty">Wählen Sie in der Skizze eine Einheit oder einen Zähler.</p>
+        </aside>
+      </div>
+    </div>
+
+    <div class="view" id="view-rechnungen" hidden>
+      <div class="section-head">
+        <h2>Rechnungen aus der smart-me-Abrechnung</h2>
+        <span class="muted" id="rgSumme"></span>
+      </div>
+      <div class="toolbar">
+        <div class="tabs small" role="tablist" aria-label="Filter">
+          <button role="tab" id="f-alle" data-filter="alle" aria-selected="true">Alle</button>
+          <button role="tab" id="f-offen" data-filter="offen" aria-selected="false">Offen</button>
+          <button role="tab" id="f-ueber" data-filter="ueber" aria-selected="false">Überfällig</button>
+        </div>
+        <label class="btn-secondary file-btn" for="csvFile">CSV aus smart-me importieren</label>
+        <input type="file" id="csvFile" accept=".csv,text/csv" hidden>
+      </div>
+      <p class="notice" id="importResult" hidden></p>
+      <div class="table-wrap"><table class="tbl" id="rgTable"></table></div>
+    </div>
+
+    <div class="view" id="view-wartung" hidden>
+      <div class="wartung-grid">
+        <section class="panel">
+          <h2>Software</h2>
+          <dl class="kv" id="swInfo"></dl>
+          <div class="confirm-row" id="updateRow">
+            <button class="btn-primary" id="updateBtn">Update installieren</button>
+          </div>
+          <p class="muted small-text" id="updateHint"></p>
+          <details>
+            <summary>Update-Protokoll</summary>
+            <pre class="log" id="updateLog">–</pre>
+          </details>
+        </section>
+        <section class="panel">
+          <h2>Geräte der Anlage</h2>
+          <ul class="dev-list" id="devList"></ul>
+          <h2 class="mt">Zähler im Haus</h2>
+          <ul class="dev-list" id="meterList"></ul>
+        </section>
+        <section class="panel wide">
+          <div class="section-head">
+            <h2>Geräte im Netz suchen</h2>
+            <button class="btn-secondary" id="scanBtn">Suche starten</button>
+          </div>
+          <p class="muted small-text">Sucht im Netz des Pi nach Shelly, Fronius, SunSpec-Wechselrichtern (SMA, SolarEdge, Kostal, …), Huawei, GoodWe, Sigenergy und nach den Zählern im smart-me-Konto. Dauert etwa eine Minute.</p>
+          <p id="scanStatus" class="muted"></p>
+          <div class="table-wrap"><table class="tbl" id="scanTable"></table></div>
+          <div id="scanToml" hidden>
+            <div class="section-head mt">
+              <h3>Vorschlag für die Konfiguration</h3>
+              <button class="btn-secondary" id="copyToml">Kopieren</button>
+            </div>
+            <pre class="log" id="tomlText"></pre>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="haus.js"></script>
+</body>
+</html>

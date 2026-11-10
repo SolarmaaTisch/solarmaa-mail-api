@@ -1,0 +1,10 @@
+[Unit]
+Description=Solarmaa Dashboard: nächtliche Update-Prüfung (optional)
+
+[Timer]
+OnCalendar=*-*-* 03:17
+RandomizedDelaySec=45min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

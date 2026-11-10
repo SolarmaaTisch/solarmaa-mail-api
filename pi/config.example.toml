@@ -14,31 +14,129 @@ email = ""
 web = "www.solarmaa.ch"
 
 [quelle]
-# "demo" für Vorführungen und Werkstatt-Test, "sunspec" für die echte Anlage
+# "demo" für Vorführungen und Werkstatt-Test. Sobald unten [[geraet]]-Blöcke stehen,
+# werden diese gelesen (typ hier dann egal).
 typ = "demo"
 intervall_s = 5
 
+# ---------------------------------------------------------------------------
+# Geräte der Anlage. Vorschlag automatisch erzeugen:
+#   python3 -m solarmaa_dash erkennen --toml /tmp/vorschlag.toml
+# Rollen:  pv        misst die Produktion (Wechselrichter oder Messgerät am PV-Abgang)
+#          netz      Zähler am Netzanschluss (+ Bezug, − Einspeisung)
+#          speicher  Batterie (+ Entladen, − Laden) und/oder Ladezustand
+#          anlage    Gerät liefert PV, Netz und Batterie auf einmal (Fronius, Huawei, GoodWe, Sigenergy)
+# Typen:   sunspec, fronius, shelly, smartme_cloud, modbus_profil (siehe docs/04-inbetriebnahme.md)
+#
+# Beispiel A: Wechselrichter mit SunSpec (SMA, SolarEdge, Kostal, Fronius, ...) + Netzzähler
+# [[geraet]]
+# name = "Wechselrichter"
+# rolle = "pv"
+# typ = "sunspec"
+# host = "192.168.1.50"
+# unit = 1
+#
+# [[geraet]]
+# name = "Netzzähler"
+# rolle = "netz"
+# typ = "sunspec"
+# host = "192.168.1.50"
+# unit = 200
+# vorzeichen = 1          # -1, falls Einspeisung positiv angezeigt wird
+#
+# Beispiel B: jede Marke, gemessen mit Shelly (Wechselrichter-Protokoll egal)
+# [[geraet]]
+# name = "PV-Abgang"
+# rolle = "pv"
+# typ = "shelly"
+# host = "192.168.1.61"
+#
+# [[geraet]]
+# name = "Hausanschluss"
+# rolle = "netz"
+# typ = "shelly"
+# host = "192.168.1.62"
+# passwort = ""           # nur falls am Shelly ein Passwort gesetzt ist
+#
+# Beispiel C: Hersteller-Profil (huawei_sun2000, goodwe_et, sigenergy)
+# [[geraet]]
+# name = "Sigenergy"
+# rolle = "anlage"
+# typ = "modbus_profil"
+# profil = "sigenergy"
+# host = "192.168.1.70"
+# unit = 247
+#
+# Beispiel D: Fronius ohne Modbus (Solar API)
+# [[geraet]]
+# name = "Fronius"
+# rolle = "anlage"
+# typ = "fronius"
+# host = "192.168.1.40"
+# akku_vorzeichen = 1
+
+# Alte Form (weiterhin gültig, wenn keine [[geraet]]-Blöcke vorhanden sind):
 [quelle.wechselrichter]
-host = "192.168.1.50"                 # feste IP oder DHCP-Reservation im Kundenrouter
+host = "192.168.1.50"
 port = 502
-unit = 1                              # Modbus-Unit-ID, je nach Hersteller
+unit = 1
 
 [quelle.zaehler]
-# Smart Meter am Netzanschlusspunkt (Bezug/Einspeisung).
-# Oft am gleichen Host wie der Wechselrichter, aber mit anderer Unit-ID.
-# Mit "python3 -m solarmaa_dash scan HOST --unit N" prüfen. Leer lassen, wenn keiner vorhanden.
 host = "192.168.1.50"
 port = 502
 unit = 200
-# +1: positiver Zählerwert = Netzbezug.  -1: positiver Wert = Einspeisung.
-# Bei der Inbetriebnahme prüfen (siehe docs/04-inbetriebnahme.md, Schritt 6).
 netz_vorzeichen = 1
 
 [quelle.speicher]
-# Optional: Gerät mit SunSpec-Modell 124 für den Ladezustand. Leer = kein Speicher.
 host = ""
 port = 502
 unit = 1
+
+# ---------------------------------------------------------------------------
+# smart-me Cloud (für Zähler mit typ = "smartme_cloud"). API-Key im smart-me-Portal
+# erstellen. Diese Datei ist nur für root und den Dienst lesbar.
+[smartme]
+basis_url = "https://api.smart-me.com"
+api_key = ""
+# alternativ Login:
+# benutzer = ""
+# passwort = ""
+cache_s = 30
+
+# ---------------------------------------------------------------------------
+# Haus / ZEV (Mehrfamilienhaus, Mieterstrom). Ohne diesen Teil: nur Anlagen-Dashboard.
+[haus]
+aktiv = false
+demo = false                          # true = simulierte Wohnungszähler + Beispielrechnungen
+name = "MFH Beispielstrasse 12"
+geschosse = ["UG", "EG", "1. OG", "2. OG"]   # von unten nach oben
+intervall_s = 30
+
+# Abweichende Spaltennamen im smart-me-CSV-Export hier zuordnen (sonst automatisch)
+# [haus.rechnungen_csv]
+# nr = "Rechnungsnummer"
+# einheit = "Abrechnungseinheit"
+# betrag = "Total inkl. MWST"
+
+# Pro Einheit ein Block. typ: wohnung | gewerbe | allgemein | technik
+# smartme_ordner = Name der Abrechnungseinheit in smart-me (für den Rechnungsimport)
+#
+# [[haus.einheit]]
+# id = "eg-links"
+# name = "Wohnung EG links"
+# geschoss = "EG"
+# typ = "wohnung"
+# smartme_ordner = "EG links"
+#
+#   [[haus.einheit.zaehler]]
+#   name = "Wohnungszähler"
+#   typ = "smartme_cloud"
+#   seriennummer = "7100200"
+#
+#   [[haus.einheit.zaehler]]
+#   name = "Wärmepumpe"
+#   typ = "shelly"
+#   host = "192.168.1.80"
 
 [auswertung]
 # Optional. Nur ausfüllen, wenn die Werte für diesen Kunden bekannt sind

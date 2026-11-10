@@ -1,0 +1,42 @@
+# GoodWe Hybrid ET / EH / BT / BH, Modbus
+#
+# Quelle der Register: Open-Source-Bibliothek «goodwe» (marcelblijleven), Datei et.py.
+# Unit-ID 247 (0xF7). ACHTUNG: Viele GoodWe-Dongles sprechen Modbus nur über UDP (Port 8899),
+# nicht über Modbus TCP 502. Dieses Profil funktioniert nur, wenn das Gerät Modbus TCP auf
+# Port 502 anbietet (neuere LAN-/WLAN-Kits bzw. Firmware; beim Hersteller bestätigen).
+#
+# UNGEPRÜFT: Skalierung und Vorzeichen von Netz und Batterie sind in der Quelle nicht
+# dokumentiert, sondern aus der dortigen Formel «Hausverbrauch = PV + Batterie − Netz»
+# abgeleitet. Bei Sonne mit «geraet-test» prüfen, dann geprueft = true.
+
+name = "GoodWe ET/EH"
+geprueft = false
+rolle = "anlage"
+funktion = 3
+wortfolge = "gross"
+
+[erkennung]            # Modellname als Text ab 35011 (5 Register), z. B. «GW10K-ET»
+units = [247]
+register = 35011
+laenge = 5
+muster = "GW"
+
+[werte.pv_w]           # Summe PV-Eingänge ppv1..ppv4 (je 4 Byte)
+register = [35105, 35109, 35113, 35117]
+typ = "u32"
+faktor = 1.0
+
+[werte.grid_w]         # Zähler-Wirkleistung total (36025, 4 Byte, mit Vorzeichen); GoodWe: + Einspeisung (abgeleitet)
+register = 36025
+typ = "i32"
+faktor = -1.0
+
+[werte.battery_w]      # Batterieleistung (35182, 4 Byte, mit Vorzeichen); + Entladen (abgeleitet)
+register = 35182
+typ = "i32"
+faktor = 1.0
+
+[werte.soc]            # Batterie-Ladezustand in %
+register = 37007
+typ = "u16"
+faktor = 1.0

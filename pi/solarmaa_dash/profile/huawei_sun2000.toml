@@ -1,0 +1,41 @@
+# Huawei SUN2000 (Wechselrichter mit SDongle oder Smart Dongle, Modbus TCP)
+# UNGEPRÜFT: Register nach Huawei «SUN2000 MODBUS Interface Definitions».
+# Vor dem ersten Einsatz an einer echten Anlage mit «geraet-test» vergleichen
+# und erst dann geprueft = true setzen.
+#
+# Voraussetzungen am Gerät: Modbus TCP im FusionSolar/SUN2000-App aktivieren
+# («Modbus TCP: Enable (unrestricted)»), Unit-ID meist 1 (Dongle) – mit Test prüfen.
+# Rolle im Config: "anlage". Hausverbrauch = PV (DC) + Netz + Batterie.
+
+name = "Huawei SUN2000"
+geprueft = false
+funktion = 3
+wortfolge = "gross"
+
+rolle = "anlage"
+
+[erkennung]           # Modellname als Text ab Register 30000 (15 Register)
+units = [1, 0]
+register = 30000
+laenge = 15
+muster = "SUN2000"
+
+[werte.pv_w]          # Eingangsleistung DC (PV)
+register = 32064
+typ = "i32"
+faktor = 1.0
+
+[werte.grid_w]        # Leistungsmesser: Huawei > 0 = Einspeisung, darum faktor -1
+register = 37113
+typ = "i32"
+faktor = -1.0
+
+[werte.battery_w]     # Batterie: Huawei > 0 = Laden, darum faktor -1
+register = 37765
+typ = "i32"
+faktor = -1.0
+
+[werte.soc]           # Ladezustand, Auflösung 0.1 %
+register = 37760
+typ = "u16"
+faktor = 0.1

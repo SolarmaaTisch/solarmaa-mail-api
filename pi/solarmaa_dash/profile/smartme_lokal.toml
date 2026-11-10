@@ -1,0 +1,23 @@
+# smart-me Zähler lokal über Modbus TCP (ohne Cloud beim Auslesen)
+#
+# Voraussetzungen laut smart-me: Professional-Abo, Modbus TCP in den Geräte-Einstellungen
+# im smart-me-Portal aktivieren, Port 502, Funktion 03 (Read Holding Register).
+#
+# NOCH LEER: Die Registerliste aus https://doc.smart-me.com/interfaces/modbus-tcp
+# hier eintragen (konnte beim Erstellen nicht abgerufen werden). Bis dahin
+# smart-me über die Cloud-API anbinden (typ = "smartme_cloud").
+#
+# Vorlage:
+# [werte.w]
+# register = 0
+# typ = "f32"
+# faktor = 1.0
+# [werte.import_wh]
+# register = 0
+# typ = "u32"
+# faktor = 1.0
+
+name = "smart-me lokal (Modbus TCP)"
+geprueft = false
+funktion = 3
+wortfolge = "gross"

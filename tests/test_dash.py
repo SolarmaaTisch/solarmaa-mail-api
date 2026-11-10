@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "pi"))
 from solarmaa_dash import config, sunspec  # noqa: E402
 from solarmaa_dash.modbus import ModbusError, ModbusTcpClient  # noqa: E402
 from solarmaa_dash.server import State, serve  # noqa: E402
-from solarmaa_dash.sources import DemoSource, Snapshot, SunSpecSource  # noqa: E402
+from solarmaa_dash.sources import AnlagenQuelle as SunSpecSource, DemoSource, Snapshot  # noqa: E402
 from solarmaa_dash.store import Store, ratios  # noqa: E402
 
 

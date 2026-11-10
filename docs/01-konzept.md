@@ -55,34 +55,51 @@ flowchart LR
 - **Datenquelle:** SunSpec über Modbus TCP. Das ist der herstellerübergreifende Standard, den viele Wechselrichter und Zähler sprechen. Ein `scan`-Befehl zeigt bei der Inbetriebnahme, was das Gerät liefert.
 - **Demo-Modus:** simulierte Anlage für Werkstatt, Messe und Verkaufsgespräch. Die App zeigt dann deutlich ein Demo-Band.
 
-## Kompatibilität
+## Kompatibilität: ein Pi für alle Anlagen
 
-Version 1 unterstützt Geräte mit SunSpec-Modellen 101–103 (Wechselrichter, «int + SF»), 201–204 (Zähler) und 124 (Ladezustand Speicher). Welche Hersteller und Firmware-Stände das konkret erfüllen, muss pro Gerätetyp einmal mit `scan` geprüft und in der Tabelle in [04-inbetriebnahme.md](04-inbetriebnahme.md) nachgetragen werden.
+Der Pi kombiniert beliebig viele Geräte. Jedes bekommt eine Rolle (PV, Netz, Speicher oder «anlage» für Geräte, die alles liefern). Die Geräteerkennung (`erkennen`) schlägt die Konfiguration automatisch vor.
 
-Nicht in Version 1:
-- Hersteller ohne SunSpec über Modbus TCP (eigene Registerkarten). Dafür braucht es pro Hersteller einen kleinen Adapter in `sources.py`.
-- Float-Modelle 111–113.
-- Batterie-Leistung bei Hybrid-Wechselrichtern: Ladezustand ja, Lade-/Entladeleistung erst mit Hersteller-Adapter. Der Hausverbrauch stimmt trotzdem, weil er aus Wechselrichter-AC-Leistung und Netzzähler gerechnet wird.
+| Weg | Geräte | Stand |
+|---|---|---|
+| SunSpec über Modbus TCP | Wechselrichter, Zähler und Speicher vieler Hersteller (z. B. SMA, SolarEdge, Kostal, Fronius) | mit simuliertem Gerät getestet, pro Hersteller an echter Anlage prüfen |
+| Fronius Solar API (HTTP) | Fronius mit Datamanager oder GEN24, auch ohne Modbus | Batterie-Vorzeichen bei der ersten Anlage prüfen |
+| Registerprofil (Modbus TCP) | Huawei SUN2000, GoodWe ET/EH, Sigenergy; weitere als Profil-Datei ohne Programmierung | Profile nach Herstellerdoku bzw. Open-Source-Integrationen, **ungeprüft** |
+| Shelly (lokal, HTTP) | Pro 3EM, 3EM, EM, Pro EM, Plus PM, Pro 4PM u. a., Gen1 bis Gen4 | Feldnamen nach Shelly-API, an echtem Gerät prüfen |
+| smart-me | Cloud-API (API-Key), lokal per Modbus TCP vorbereitet | Feldnamen aus Community-Beispielen, beim ersten Konto prüfen |
+
+**Damit wirklich jede Marke geht:** Spricht ein Wechselrichter kein unterstütztes Protokoll, misst ein Shelly Pro 3EM oder ein smart-me-Zähler am PV-Abgang und einer am Netzanschluss. Dann ist die Marke egal. Nur der Batterie-Ladezustand fehlt in diesem Fall, bis es ein Profil gibt.
+
+**GoodWe:** Viele GoodWe-Dongles sprechen Modbus nur über UDP (Port 8899), nicht über Modbus TCP. Das Profil funktioniert nur mit Geräten, die Modbus TCP auf Port 502 anbieten. Sonst den Messweg über Shelly oder smart-me nutzen.
+
+## Haus und Abrechnung
+
+Für Mehrfamilienhäuser und ZEV: Hausskizze mit anklickbaren Einheiten und Zählern, Login mit Rollen (Solarmaa, Verwaltung, Mieter), Rechnungen aus smart-me. Details in [06-haus-und-abrechnung.md](06-haus-und-abrechnung.md).
+
+## Wartung
+
+Web-Updates mit Testlauf und automatischem Zurückfallen, Gerätestatus und Geräteerkennung im Browser, Fernzugriff über VPN. Details in [07-wartung-und-updates.md](07-wartung-und-updates.md).
 
 ## Sicherheit und Datenschutz
 
 - Alles bleibt im Kundennetz. Keine Cloud, kein Konto, keine Daten an Solarmaa.
 - Der Pi liest nur (Modbus Funktion 3). Er schreibt nichts in Wechselrichter oder Zähler.
-- Kein Portforwarding im Router. Wer im WLAN des Kunden ist, kann die Werte sehen; für Version 1 ist das bewusst so einfach gehalten.
+- Kein Portforwarding im Router. Das Anlagen-Dashboard sieht jeder im Heimnetz. Daten einzelner Einheiten, Rechnungen und Berechtigte nur mit Login und passender Rolle.
+- Ausnahme Cloud: smart-me-Zähler über die Cloud-API holen ihre Werte bei smart-me ab.
 - Der Dienst läuft als eigener Benutzer ohne Root-Rechte, mit Hardware-Watchdog und begrenzter Log-Grösse.
 
 ## Ausbaustufen
 
 | Stufe | Inhalt |
 |---|---|
-| 2 – Service | Pi meldet «Anlage produziert nicht / Gerät nicht erreichbar» an Solarmaa (z. B. per Mail über die geplante Mail-API). Fernwartung über VPN (z. B. Tailscale) für Updates. |
+| 2 – Service | Pi meldet «Anlage produziert nicht / Gerät nicht erreichbar» an Solarmaa (z. B. per Mail über die geplante Mail-API). Web-Updates und Fernzugriff sind bereits vorbereitet. |
 | 3 – Unterwegs | Kunde sieht die App auch ausserhalb des Hauses, über einen Solarmaa-Server oder VPN. Dann mit Login. |
 | 4 – Steuern | Überschuss nutzen: Warmwasser, Wallbox, Wärmepumpe (SG-Ready) über Relais oder Modbus-Schreiben. Benötigt eigene Sicherheitsprüfung. |
-| 5 – Weitere Hersteller | Adapter für Geräte ohne SunSpec. |
+| 5 – Weitere Hersteller | Weitere Registerprofile; GoodWe über UDP; Rechnungen direkt aus smart-me, sobald es eine API gibt. |
 
 ## Offene Entscheide für Solarmaa
 
 - Wird das Gerät verkauft, in die Offerte eingerechnet oder als Service-Abo angeboten?
-- Welche Hersteller verbaut Solarmaa am häufigsten? Diese zuerst mit `scan` testen und freigeben.
+- Welche Hersteller verbaut Solarmaa am häufigsten? Diese zuerst mit `geraet-test` an einer echten Anlage prüfen und das Profil auf `geprueft = true` setzen.
+- smart-me: Professional-Lizenz für die Cloud-API klären und nachfragen, ob es eine Rechnungs-API gibt.
 - Soll der Kunde die App auch unterwegs sehen (Stufe 3)? Das ändert Datenschutz und Betrieb.
 - Tarif- und CO₂-Werte: zentral pro Netzbetreiber pflegen oder pro Kunde eintragen?

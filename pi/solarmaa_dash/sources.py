@@ -1,4 +1,4 @@
-"""Datenquellen: echte Anlage über SunSpec oder Demo-Simulation.
+"""Datenquellen: echte Anlage aus beliebigen Geräten (siehe geraete/) oder Demo-Simulation.
 
 Vorzeichen überall gleich:
   pv_w       Produktion (immer >= 0)
@@ -12,8 +12,6 @@ import math
 import time
 from dataclasses import asdict, dataclass
 
-from . import sunspec
-from .modbus import ModbusError, ModbusTcpClient
 
 
 @dataclass
@@ -97,81 +95,87 @@ class DemoSource:
 
 
 # ---------------------------------------------------------------------------
-class _Device:
-    def __init__(self, host: str, port: int, unit: int):
-        self.client = ModbusTcpClient(host, port, unit)
-        self.models: dict[int, sunspec.Model] | None = None
-
-    def model(self, ids: tuple[int, ...]) -> sunspec.Model | None:
-        if self.models is None:
-            self.models = sunspec.discover(self.client)
-        for mid in ids:
-            if mid in self.models:
-                return self.models[mid]
-        return None
-
-    def block(self, m: sunspec.Model) -> list[int]:
-        return self.client.read_many(m.start, m.length)
-
-    def reset(self) -> None:
-        self.models = None
-        self.client.close()
+ROLLEN = ("pv", "netz", "speicher", "anlage")
 
 
-class SunSpecSource:
-    name = "sunspec"
+def geraete_aus_config(cfg: dict) -> list[dict]:
+    """Liste der Anlagen-Geräte. Neue Form: [[geraet]]. Alte Form [quelle.*] wird umgesetzt."""
+    if cfg.get("geraet"):
+        out = []
+        for g in cfg["geraet"]:
+            g = dict(g)
+            if g.get("rolle") not in ROLLEN:
+                raise ValueError(f"Gerät {g.get('name', '?')}: rolle muss eine von {', '.join(ROLLEN)} sein")
+            out.append(g)
+        return out
+    q = cfg["quelle"]
+    out = [{"name": "Wechselrichter", "rolle": "pv", "typ": "sunspec", **q["wechselrichter"]}]
+    z = q["zaehler"]
+    if z.get("host"):
+        out.append({"name": "Netzzähler", "rolle": "netz", "typ": "sunspec",
+                    "vorzeichen": z.get("netz_vorzeichen", 1), **z})
+    s = q["speicher"]
+    if s.get("host"):
+        out.append({"name": "Speicher", "rolle": "speicher", "typ": "sunspec", "optional": True, **s})
+    return out
+
+
+class AnlagenQuelle:
+    """Kombiniert beliebig viele Geräte zu einem Anlagen-Messwert.
+
+    Hausverbrauch = PV + Netz + Batterie(Entladen +). Batterieleistung zählt nur, wenn ein Gerät
+    sie separat liefert (AC-gekoppelter Speicher, Fronius, Huawei). Bei Hybrid-Wechselrichtern,
+    deren AC-Leistung als PV gemessen wird, ist die Batterie schon enthalten (SunSpec Modell 124
+    liefert nur den Ladezustand).
+    """
+
+    name = "geraete"
 
     def __init__(self, cfg: dict):
-        q = cfg["quelle"]
-        wr = q["wechselrichter"]
-        self.inverter = _Device(wr["host"], int(wr["port"]), int(wr["unit"]))
-        z = q["zaehler"]
-        self.meter = _Device(z["host"], int(z["port"]), int(z["unit"])) if z.get("host") else None
-        self.grid_sign = -1 if int(z.get("netz_vorzeichen", 1)) < 0 else 1
-        s = q["speicher"]
-        self.storage = _Device(s["host"], int(s["port"]), int(s["unit"])) if s.get("host") else None
+        from .geraete import erstelle
+        self.geraete = []
+        for g in geraete_aus_config(cfg):
+            g.setdefault("_smartme", cfg.get("smartme", {}))
+            self.geraete.append((g, erstelle(g, g["rolle"])))
+        self.status: dict[str, str] = {}
 
     def read(self) -> Snapshot:
         now = time.time()
-        try:
-            m = self.inverter.model(sunspec.INVERTER_MODELS)
-            if m is None:
-                raise ModbusError("Wechselrichter liefert kein SunSpec-Wechselrichtermodell (101–103)")
-            inv = sunspec.parse_inverter(self.inverter.block(m), is_float=m.model_id > 110)
-        except Exception:
-            self.inverter.reset()
-            raise
-        pv = max(inv["ac_w"] or 0.0, 0.0)
+        pv = grid = bat = soc = None
+        pv_wh = imp = exp = None
 
-        grid = imp = exp = None
-        if self.meter:
+        def add(a, b):
+            return b if a is None else (a if b is None else a + b)
+
+        for g, dev in self.geraete:
+            name = g.get("name", g["typ"])
             try:
-                mm = self.meter.model(sunspec.METER_MODELS)
-                if mm is None:
-                    raise ModbusError("Zähler liefert kein SunSpec-Zählermodell (201–204)")
-                met = sunspec.parse_meter(self.meter.block(mm))
-            except Exception:
-                self.meter.reset()
-                raise
-            grid = None if met["w"] is None else self.grid_sign * met["w"]
-            imp, exp = met["import_wh_total"], met["export_wh_total"]
-            if self.grid_sign < 0:
-                imp, exp = exp, imp
-
-        soc = None
-        if self.storage:
-            try:
-                sm = self.storage.model((sunspec.STORAGE_MODEL,))
-                if sm is not None:
-                    soc = sunspec.parse_storage(self.storage.block(sm))["soc"]
-            except Exception:
-                self.storage.reset()  # Speicher ist optional: Fehler nicht weiterreichen
-
-        load = None if grid is None else max(pv + grid, 0.0)
-        return Snapshot(now, pv, grid, load, None, soc, inv["ac_wh_total"], imp, exp)
+                m = dev.lesen()
+                self.status[name] = "ok"
+            except Exception as e:
+                self.status[name] = str(e)
+                if g.get("optional") or g["rolle"] == "speicher":
+                    continue
+                raise type(e)(f"{name}: {e}") from e
+            r = g["rolle"]
+            if r == "pv":
+                pv = add(pv, abs(m.w) if m.w is not None else None)
+                pv_wh = add(pv_wh, max(m.import_wh or 0.0, m.export_wh or 0.0) or None)
+            elif r == "netz":
+                grid = add(grid, m.w)
+                imp, exp = add(imp, m.import_wh), add(exp, m.export_wh)
+            elif r == "speicher":
+                bat = add(bat, m.w)
+                soc = m.soc if m.soc is not None else soc
+            else:  # anlage
+                pv, grid, bat = add(pv, m.pv_w), add(grid, m.grid_w), add(bat, m.battery_w)
+                soc = m.soc if m.soc is not None else soc
+                pv_wh = add(pv_wh, m.extra.get("pv_wh_total"))
+        load = None if grid is None else max((pv or 0.0) + grid + (bat or 0.0), 0.0)
+        return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp)
 
 
 def make_source(cfg: dict):
-    if cfg["quelle"]["typ"] == "sunspec":
-        return SunSpecSource(cfg)
-    return DemoSource(kwp=float(cfg["anlage"]["kwp"]))
+    if not cfg.get("geraet") and cfg["quelle"]["typ"] == "demo":
+        return DemoSource(kwp=float(cfg["anlage"]["kwp"]))
+    return AnlagenQuelle(cfg)

@@ -19,6 +19,15 @@ Produktwahl und Preise beim Grossisten prüfen. Die Angaben unten sind Anforderu
 | – | Patchkabel Cat 6, ggf. Verlegekabel und Dose | Pi ↔ Router | nach Bedarf |
 | – | Etikett / QR-Code-Kleber | Adresse der App für den Kunden | 1 |
 
+Messgeräte, wenn der Wechselrichter kein unterstütztes Protokoll spricht oder im Mehrfamilienhaus:
+
+| Bauteil | Zweck |
+|---|---|
+| Shelly Pro 3EM (Hutschiene, 3-phasig, Stromwandler-Zangen) | Netzanschluss oder PV-Abgang messen, lokal über LAN/WLAN |
+| smart-me Zähler | Wohnungs- und Allgemeinzähler im ZEV, Abrechnung über smart-me |
+
+Shelly Pro 3EM und smart-me-Zähler sind Messgeräte im 230/400-V-Bereich: Einbau, Absicherung und Wandler nach Herstellerangaben und NIN. Bei Zangenwandlern die Flussrichtung beachten. Die Software gleicht ein falsches Vorzeichen mit `vorzeichen = -1` aus, beim PV-Abgang spielt die Richtung keine Rolle.
+
 Optional, je nach Anlage:
 - **Kleine USV-Lösung oder Supercap-Modul** für sauberes Herunterfahren bei Stromausfall. Bei Einsatz von Industrie-SD-Karte und Watchdog meist nicht nötig.
 - **Industrie-Variante:** Hutschienen-Rechner auf Raspberry-Pi-Basis mit 24 V-Eingang und spezifiziertem Temperaturbereich (z. B. Revolution Pi von Kunbus). Teurer, dafür als Industriegerät zertifiziert. Die Software läuft darauf ohne Änderung.
