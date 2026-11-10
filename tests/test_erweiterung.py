@@ -24,7 +24,7 @@ from solarmaa_dash.geraete.smartme import SmartMeCloudZaehler, _KONTEN  # noqa: 
 from solarmaa_dash.haus import Haus  # noqa: E402
 from solarmaa_dash.rechnungen import Rechnungen, _betrag  # noqa: E402
 from solarmaa_dash.server import State, serve  # noqa: E402
-from solarmaa_dash.sources import AnlagenQuelle, DemoSource, Snapshot  # noqa: E402
+from solarmaa_dash.sources import AnlagenQuelle, DemoSource, Snapshot, SocSchaetzer  # noqa: E402
 from solarmaa_dash.store import Store  # noqa: E402
 from test_dash import FakeModbus, u16  # noqa: E402
 
@@ -195,6 +195,49 @@ class AnlagenQuelleTests(unittest.TestCase):
             self.assertNotEqual(q.status["Akku"], "ok")
         finally:
             srv.shutdown(); srv.server_close()
+
+
+class EvoliumTests(unittest.TestCase):
+    def test_soc_energiebilanz_und_kalibrierung(self):
+        s = SocSchaetzer(10, wirkungsgrad=0.9)
+        t = 1000.0
+        s.update(t, 0.0, 0.0)
+        for i in range(1, 61):                         # 1 h mit 1 kW laden
+            soc = s.update(t + i * 60, -1000.0, 0.0)
+        self.assertAlmostEqual(soc, 59.0, places=1)    # 50 % + 900 Wh
+        self.assertFalse(s.kalibriert)
+        t2 = t + 3600
+        for i in range(1, 7):                          # 6 min: Überschuss, Speicher lädt nicht -> voll
+            soc = s.update(t2 + i * 60, 0.0, -800.0)
+        self.assertEqual(soc, 100.0)
+        self.assertTrue(s.kalibriert)
+        t3 = t2 + 600
+        for i in range(0, 7):                          # 6 min: Netzbezug, Speicher entlädt nicht -> leer
+            soc = s.update(t3 + i * 60, 0.0, 900.0)
+        self.assertEqual(soc, 0.0)
+
+    def test_evolium_ueber_shelly(self):
+        # Shelly am Speicher-Abgang: Laden = Bezug (+), darum vorzeichen = -1
+        srv, host = start_http({"/shelly": {"gen": 2},
+                                "/rpc/Shelly.GetStatus": {"switch:0": {"apower": 1500.0}}})
+        srv2, host2 = start_http({"/shelly": {"gen": 2},
+                                  "/rpc/Shelly.GetStatus": {"em:0": {"total_act_power": -500.0}, "emdata:0": {}}})
+        srv3, host3 = start_http({"/shelly": {"gen": 2},
+                                  "/rpc/Shelly.GetStatus": {"em:0": {"total_act_power": -3000.0}, "emdata:0": {}}})
+        try:
+            cfg = config._merge(config.DEFAULTS, {"daten": {"pfad": ":memory:"}, "geraet": [
+                {"name": "PV", "rolle": "pv", "typ": "shelly", "host": host3},
+                {"name": "Netz", "rolle": "netz", "typ": "shelly", "host": host2},
+                {"name": "Evolium", "rolle": "speicher", "typ": "shelly", "host": host, "vorzeichen": -1,
+                 "soc_schaetzen": True, "kapazitaet_kwh": 10}]})
+            s = AnlagenQuelle(cfg).read()
+            self.assertEqual(s.battery_w, -1500.0)       # lädt
+            self.assertEqual(s.load_w, 1000.0)           # 3000 PV − 500 Einspeisung − 1500 Laden
+            self.assertTrue(s.soc_geschaetzt)
+            self.assertAlmostEqual(s.soc, 50.0)
+        finally:
+            for x in (srv, srv2, srv3):
+                x.shutdown(); x.server_close()
 
 
 def haus_cfg():

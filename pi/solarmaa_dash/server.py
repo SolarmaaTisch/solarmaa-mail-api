@@ -120,7 +120,8 @@ class State:
         l = self.latest
         return {"name": h.name, "geschosse": h.geschosse, "demo": h.demo or self.source_name == "demo",
                 "anlage": {"pv_w": l and l.pv_w, "grid_w": l and l.grid_w, "battery_w": l and l.battery_w,
-                           "soc": l and l.soc, "load_w": l and l.load_w,
+                           "soc": l and l.soc, "soc_geschaetzt": bool(l and l.soc_geschaetzt),
+                           "load_w": l and l.load_w,
                            "kwp": self.cfg["anlage"]["kwp"], "geraete": self.geraete_status()},
                 "einheiten": einheiten, "ich": u}
 

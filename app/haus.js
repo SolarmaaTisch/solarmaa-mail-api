@@ -256,7 +256,7 @@
     if (a.soc != null) {
       svg.append(el("circle", { cx: X1 - 70, cy: ny, r: 15, class: "node", stroke: "var(--c-bat)" }));
       svg.append(el("text", { x: X1 - 70, y: ny + 4, "text-anchor": "middle", class: "tech-lbl" }, "Akku"));
-      svg.append(el("text", { x: X1 - 48, y: ny + 9, class: "tech-val" }, `${nf0.format(a.soc)} %`));
+      svg.append(el("text", { x: X1 - 48, y: ny + 9, class: "tech-val" }, `${a.soc_geschaetzt ? "ca. " : ""}${nf0.format(a.soc)} %`));
     }
   }
 

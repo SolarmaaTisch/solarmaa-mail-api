@@ -25,6 +25,7 @@ class Snapshot:
     pv_wh_total: float | None = None
     import_wh_total: float | None = None
     export_wh_total: float | None = None
+    soc_geschaetzt: bool = False
 
     def to_dict(self) -> dict:
         return {k: (round(v, 1) if isinstance(v, float) else v) for k, v in asdict(self).items()}
@@ -120,6 +121,87 @@ def geraete_aus_config(cfg: dict) -> list[dict]:
     return out
 
 
+class SocSchaetzer:
+    """Schätzt den Ladezustand eines Speichers, der nur von aussen gemessen wird
+    (z. B. Shelly am Abgang eines AC-gekoppelten Speichers wie Evolium).
+
+    Energiebilanz: Laden × Wirkungsgrad hinein, Entladen ÷ Wirkungsgrad hinaus.
+    Selbstkalibrierung:
+      voll  = Netz speist ein (Überschuss), Speicher lädt trotzdem nicht, während 5 Minuten
+      leer  = Netzbezug, Speicher entlädt trotzdem nicht, während 5 Minuten
+    Der Wert wird in einer kleinen Datei gesichert und übersteht Neustarts.
+    """
+
+    SCHWELLE_W = 40.0
+    NETZ_W = 150.0
+    HALTE_S = 300.0
+
+    def __init__(self, kapazitaet_kwh: float, wirkungsgrad: float = 0.92, datei: str | None = None,
+                 reserve_pct: float = 0.0):
+        self.cap = kapazitaet_kwh * 1000.0
+        self.eta = max(0.5, min(1.0, wirkungsgrad))
+        self.reserve = reserve_pct
+        self.datei = datei
+        self.wh = self.cap * 0.5
+        self.kalibriert = False
+        self._last: float | None = None
+        self._voll_seit: float | None = None
+        self._leer_seit: float | None = None
+        self._laden()
+
+    def _laden(self):
+        if not self.datei:
+            return
+        try:
+            import json
+            with open(self.datei) as fh:
+                d = json.load(fh)
+            self.wh = max(0.0, min(self.cap, float(d["wh"])))
+            self.kalibriert = bool(d.get("kalibriert"))
+        except (OSError, ValueError, KeyError):
+            pass
+
+    def _sichern(self):
+        if not self.datei:
+            return
+        try:
+            import json
+            with open(self.datei, "w") as fh:
+                json.dump({"wh": round(self.wh, 1), "kalibriert": self.kalibriert}, fh)
+        except OSError:
+            pass
+
+    def update(self, ts: float, battery_w: float | None, grid_w: float | None) -> float | None:
+        if battery_w is None:
+            return None
+        dt = 0.0 if self._last is None else ts - self._last
+        self._last = ts
+        if 0 < dt <= 120:  # Energiebilanz nur über lückenlose Messungen
+            h = dt / 3600
+            if battery_w < 0:
+                self.wh += -battery_w * h * self.eta
+            else:
+                self.wh -= battery_w * h / self.eta
+            self.wh = max(0.0, min(self.cap, self.wh))
+        # Kalibrierung: Speicher steht still, obwohl er laden bzw. entladen könnte
+        ruhig = abs(battery_w) < self.SCHWELLE_W
+        if ruhig and grid_w is not None and grid_w < -self.NETZ_W:
+            self._voll_seit = self._voll_seit or ts
+            if ts - self._voll_seit >= self.HALTE_S:
+                self.wh, self.kalibriert = self.cap, True
+        else:
+            self._voll_seit = None
+        if ruhig and grid_w is not None and grid_w > self.NETZ_W:
+            self._leer_seit = self._leer_seit or ts
+            if ts - self._leer_seit >= self.HALTE_S:
+                self.wh, self.kalibriert = self.cap * self.reserve / 100, True
+        else:
+            self._leer_seit = None
+        if dt <= 0 or int(ts) % 60 < dt:
+            self._sichern()
+        return 100.0 * self.wh / self.cap
+
+
 class AnlagenQuelle:
     """Kombiniert beliebig viele Geräte zu einem Anlagen-Messwert.
 
@@ -138,6 +220,16 @@ class AnlagenQuelle:
             g.setdefault("_smartme", cfg.get("smartme", {}))
             self.geraete.append((g, erstelle(g, g["rolle"])))
         self.status: dict[str, str] = {}
+        # Ladezustand schätzen, wenn ein Speicher nur gemessen wird (soc_schaetzen = true)
+        self.schaetzer = None
+        for g, _ in self.geraete:
+            if g["rolle"] == "speicher" and g.get("soc_schaetzen"):
+                from pathlib import Path
+                datei = str(Path(cfg["daten"]["pfad"]).parent / "soc-schaetzung.json") \
+                    if cfg["daten"]["pfad"] != ":memory:" else None
+                self.schaetzer = SocSchaetzer(float(g.get("kapazitaet_kwh", 10)),
+                                              float(g.get("wirkungsgrad", 0.92)), datei,
+                                              float(g.get("reserve_pct", 0)))
 
     def read(self) -> Snapshot:
         now = time.time()
@@ -172,7 +264,11 @@ class AnlagenQuelle:
                 soc = m.soc if m.soc is not None else soc
                 pv_wh = add(pv_wh, m.extra.get("pv_wh_total"))
         load = None if grid is None else max((pv or 0.0) + grid + (bat or 0.0), 0.0)
-        return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp)
+        geschaetzt = False
+        if self.schaetzer is not None and soc is None:
+            soc = self.schaetzer.update(now, bat, grid)
+            geschaetzt = soc is not None
+        return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp, geschaetzt)
 
 
 def make_source(cfg: dict):

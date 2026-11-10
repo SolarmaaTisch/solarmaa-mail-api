@@ -67,6 +67,16 @@ intervall_s = 5
 # host = "192.168.1.70"
 # unit = 247
 #
+# Beispiel E: Evolium-Speicher (AC-gekoppelt, ohne Schnittstelle) mit Shelly am Speicher-Abgang
+# [[geraet]]
+# name = "Evolium"
+# rolle = "speicher"
+# typ = "shelly"
+# host = "192.168.1.85"
+# vorzeichen = -1          # Laden zeigt der Shelly als Bezug
+# soc_schaetzen = true     # Ladezustand schätzen (App zeigt «ca.»), siehe docs/09-evolium.md
+# kapazitaet_kwh = 10
+#
 # Beispiel D: Fronius ohne Modbus (Solar API)
 # [[geraet]]
 # name = "Fronius"

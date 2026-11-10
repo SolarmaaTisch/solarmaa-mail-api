@@ -225,7 +225,7 @@
       $("nodeBat").classList.toggle("off", !hasBat);
       $("lnBat").style.display = hasBat ? "" : "none";
       if (hasBat) {
-        $("vBat").textContent = l.soc != null ? `${nf0.format(l.soc)} %` : "–";
+        $("vBat").textContent = l.soc != null ? `${l.soc_geschaetzt ? "ca. " : ""}${nf0.format(l.soc)} %` : "–";
         $("lBat").textContent = l.battery_w == null ? "Batterie" : l.battery_w > 15 ? `entlädt ${fmtW(l.battery_w)}` : l.battery_w < -15 ? `lädt ${fmtW(l.battery_w)}` : "Batterie";
         setLine("lnBat", l.battery_w, l.battery_w != null && l.battery_w < 0);
         const fillH = Math.max(0, Math.min(1, (l.soc ?? 0) / 100)) * 19;
