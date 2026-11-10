@@ -69,7 +69,7 @@ Der Pi kombiniert beliebig viele Geräte. Jedes bekommt eine Rolle (PV, Netz, Sp
 
 **Damit wirklich jede Marke geht:** Spricht ein Wechselrichter kein unterstütztes Protokoll, misst ein Shelly Pro 3EM oder ein smart-me-Zähler am PV-Abgang und einer am Netzanschluss. Dann ist die Marke egal. Nur der Batterie-Ladezustand fehlt in diesem Fall, bis es ein Profil gibt.
 
-**GoodWe:** Viele GoodWe-Dongles sprechen Modbus nur über UDP (Port 8899), nicht über Modbus TCP. Das Profil funktioniert nur mit Geräten, die Modbus TCP auf Port 502 anbieten. Sonst den Messweg über Shelly oder smart-me nutzen.
+**Modbus TCP oder RTU?** Für alle sieben Marken reicht Modbus TCP, teils mit Einstellung oder Zusatzmodul (GoodWe: LAN-Modul; SMA: Netzwerte teils vom Home Manager; Huawei: nur ein Client gleichzeitig). Details und Quellen in [08-wechselrichter-modbus-tcp.md](08-wechselrichter-modbus-tcp.md).
 
 ## Haus und Abrechnung
 

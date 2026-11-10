@@ -1,9 +1,12 @@
 # GoodWe Hybrid ET / EH / BT / BH, Modbus
 #
 # Quelle der Register: Open-Source-Bibliothek «goodwe» (marcelblijleven), Datei et.py.
-# Unit-ID 247 (0xF7). ACHTUNG: Viele GoodWe-Dongles sprechen Modbus nur über UDP (Port 8899),
-# nicht über Modbus TCP 502. Dieses Profil funktioniert nur, wenn das Gerät Modbus TCP auf
-# Port 502 anbietet (neuere LAN-/WLAN-Kits bzw. Firmware; beim Hersteller bestätigen).
+# Unit-ID 247 (0xF7), je nach Quelle auch 1 – die Erkennung probiert beide.
+# Modbus TCP auf Port 502 gibt es nur mit dem LAN-Modul oder WiFi+LAN-Kit (2.0); das
+# Standard-WLAN-Modul spricht nur mit der GoodWe-Cloud bzw. UDP 8899. Laut GoodWe-Leitfaden
+# (2021) braucht es ARM-Firmware ab Version 13 (Hochvolt-Batterie) bzw. 15 (Niedervolt).
+# Aktivieren in der SolarGo-App (beim Cybersecurity-Dongle unter «Privacy & Security»).
+# Ohne LAN-Modul: RS485 am EMS-Port über ein Modbus-RTU/TCP-Gateway, oder Messung mit Shelly.
 #
 # UNGEPRÜFT: Skalierung und Vorzeichen von Netz und Batterie sind in der Quelle nicht
 # dokumentiert, sondern aus der dortigen Formel «Hausverbrauch = PV + Batterie − Netz»
@@ -16,7 +19,7 @@ funktion = 3
 wortfolge = "gross"
 
 [erkennung]            # Modellname als Text ab 35011 (5 Register), z. B. «GW10K-ET»
-units = [247]
+units = [247, 1]
 register = 35011
 laenge = 5
 muster = "GW"

@@ -5,7 +5,7 @@
 
 Ablauf pro Adresse:
   1. Port 80 offen  → Shelly (/shelly) oder Fronius Solar API (/solar_api/GetAPIVersion.cgi)
-  2. Port 502 offen → SunSpec-Marker bei mehreren Unit-IDs; sonst Registerprofile mit
+  2. Port 502 oder 1502 offen → SunSpec-Marker bei mehreren Unit-IDs; sonst Registerprofile mit
                       [erkennung]-Abschnitt (Huawei, GoodWe, Sigenergy, ...)
   3. smart-me: Zähler im Cloud-Konto (falls [smartme] eingerichtet)
 
@@ -27,7 +27,8 @@ from .geraete.http import get_json
 from .geraete.modbus_profil import PROFIL_DIR
 from .modbus import ModbusError, ModbusTcpClient
 
-SUNSPEC_UNITS = (1, 2, 3, 126, 200, 240, 247, 100)
+SUNSPEC_UNITS = (1, 2, 3, 71, 126, 200, 240, 247, 100)
+MODBUS_PORTS = (502, 1502)  # 1502: Kostal Plenticore, häufig SolarEdge
 
 
 def eigenes_netz() -> ipaddress.IPv4Network:
@@ -55,15 +56,18 @@ def regs_text(regs: list[int]) -> str:
     return raw.split(b"\x00")[0].decode("ascii", errors="ignore").strip()
 
 
-def sunspec_info(host: str, unit: int, client: ModbusTcpClient | None = None) -> dict | None:
-    c = client or ModbusTcpClient(host, 502, unit, timeout=1.5)
+def sunspec_info(host: str, unit: int, port: int = 502) -> dict | None:
+    c = ModbusTcpClient(host, port, unit, timeout=1.5)
     try:
         models = sunspec.discover(c)
         info = {"modelle": sorted(models)}
         if 1 in models:
-            regs = c.read_many(models[1].start, 64)
-            info.update(hersteller=regs_text(regs[0:16]), modell=regs_text(regs[16:32]),
-                        seriennummer=regs_text(regs[48:64]))
+            try:  # Gerätename ist nett, aber nicht nötig
+                regs = c.read_many(models[1].start, 64)
+                info.update(hersteller=regs_text(regs[0:16]), modell=regs_text(regs[16:32]),
+                            seriennummer=regs_text(regs[48:64]))
+            except (ModbusError, OSError):
+                pass
         return info
     except (ModbusError, OSError):
         return None
@@ -81,10 +85,10 @@ def profile_mit_erkennung() -> list[tuple[str, dict]]:
     return out
 
 
-def profil_test(host: str, name: str, prof: dict) -> dict | None:
+def profil_test(host: str, name: str, prof: dict, port: int = 502) -> dict | None:
     e = prof["erkennung"]
     for unit in e.get("units", [1]):
-        c = ModbusTcpClient(host, 502, int(unit), timeout=1.5)
+        c = ModbusTcpClient(host, port, int(unit), timeout=1.5)
         try:
             regs = c.read_holding(int(e["register"]), int(e.get("laenge", 1)))
             text = regs_text(regs) if e.get("typ", "text") == "text" else str(regs[0])
@@ -119,10 +123,13 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
                                   "rolle": "anlage", "hinweis": "Batterie-Vorzeichen bei Sonne prüfen"})
             except GeraetFehler:
                 pass
-    if port_offen(host, 502):
+    for port in MODBUS_PORTS:
+        if not port_offen(host, port):
+            continue
+        vorher = len(funde)
         gefunden_units = set()
         for unit in SUNSPEC_UNITS:
-            info = sunspec_info(host, unit)
+            info = sunspec_info(host, unit, port)
             if not info:
                 continue
             gefunden_units.add(unit)
@@ -130,21 +137,22 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
             for rolle, ids in (("pv", sunspec.INVERTER_MODELS), ("netz", sunspec.METER_MODELS),
                                ("speicher", (sunspec.STORAGE_MODEL,))):
                 if any(m in mods for m in ids):
-                    funde.append({"host": host, "typ": "sunspec", "unit": unit, "rolle": rolle,
+                    funde.append({"host": host, "port": port, "typ": "sunspec", "unit": unit, "rolle": rolle,
                                   "modell": f"{info.get('hersteller', '')} {info.get('modell', '')}".strip() or "SunSpec",
                                   "seriennummer": info.get("seriennummer", ""),
                                   "hinweis": "Netz-Vorzeichen bei Sonne prüfen" if rolle == "netz" else ""})
         if not gefunden_units:
             for name, prof in profile:
-                r = profil_test(host, name, prof)
+                r = profil_test(host, name, prof, port)
                 if r:
-                    funde.append({"host": host, "typ": "modbus_profil", "profil": name, "unit": r["unit"],
+                    funde.append({"host": host, "port": port, "typ": "modbus_profil", "profil": name, "unit": r["unit"],
                                   "rolle": prof.get("rolle", "anlage"), "modell": prof.get("name", name),
                                   "seriennummer": r["kennung"],
                                   "hinweis": "" if r["geprueft"] else "Profil ungeprüft: Werte mit geraet-test vergleichen"})
                     break
-        if not funde:
-            funde.append({"host": host, "typ": "unbekannt", "modell": "Modbus TCP offen, Gerät nicht erkannt",
+        if len(funde) == vorher:
+            funde.append({"host": host, "port": port, "typ": "unbekannt",
+                          "modell": f"Modbus TCP offen (Port {port}), Gerät nicht erkannt",
                           "rolle": "", "hinweis": "Registerprofil anlegen (siehe profile/)"})
     return funde
 
@@ -182,6 +190,8 @@ def als_toml(funde: list[dict]) -> str:
             continue
         zeilen += ["[[geraet]]", f'name = "{f["modell"]}"', f'rolle = "{f["rolle"]}"', f'typ = "{f["typ"]}"',
                    f'host = "{f["host"]}"']
+        if f.get("port", 502) != 502:
+            zeilen.append(f'port = {f["port"]}')
         if "unit" in f:
             zeilen.append(f'unit = {f["unit"]}')
         if f.get("profil"):

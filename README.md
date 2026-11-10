@@ -15,6 +15,7 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 | [Kurzanleitung Kunde](docs/05-kunden-kurzanleitung.md) | Einseitige Anleitung zum Abgeben |
 | [Haus und Abrechnung](docs/06-haus-und-abrechnung.md) | Hausskizze, Rollen und Login, smart-me, Rechnungen |
 | [Wartung und Updates](docs/07-wartung-und-updates.md) | Web-Update, Fernzugriff, Geräteerkennung |
+| [Wechselrichter und Modbus TCP](docs/08-wechselrichter-modbus-tcp.md) | Was jede Marke über Modbus TCP liefert, Ports, Stolpersteine, wann RS485 |
 
 ## Schnellstart (Demo auf dem eigenen Rechner)
 

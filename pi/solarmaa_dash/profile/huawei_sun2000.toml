@@ -5,6 +5,9 @@
 #
 # Voraussetzungen am Gerät: Modbus TCP im FusionSolar/SUN2000-App aktivieren
 # («Modbus TCP: Enable (unrestricted)»), Unit-ID meist 1 (Dongle) – mit Test prüfen.
+# ACHTUNG: SDongle und Wechselrichter-WLAN bedienen nur EINEN Modbus-TCP-Client gleichzeitig.
+# Läuft schon ein anderes System (Wallbox, evcc, Home Assistant, Energiemanager), blockieren
+# sich die beiden. Dann einen Modbus-Proxy einsetzen oder Netz/PV mit Shelly messen.
 # Rolle im Config: "anlage". Hausverbrauch = PV (DC) + Netz + Batterie.
 
 name = "Huawei SUN2000"
