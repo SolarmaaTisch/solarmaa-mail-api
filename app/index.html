@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Solarmaa Energie</title>
+<meta name="description" content="Live-Daten Ihrer Solaranlage, installiert von Solarmaa">
+<meta name="theme-color" content="#b279d7">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="demo-band" id="demoBand" hidden>Demo-Modus: simulierte Werte, keine echte Anlage</div>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand">
+      <span class="wordmark">solarmaa</span>
+      <span class="plant" id="plantName">Meine Solaranlage</span>
+    </div>
+    <div class="status" id="status" data-state="wait">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="statusText">Verbinde …</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap main">
+  <section class="flow-card" aria-labelledby="flowTitle">
+    <div class="section-head">
+      <h1 id="flowTitle">Jetzt</h1>
+      <span class="muted" id="clock">–</span>
+    </div>
+    <svg id="flow" class="flow" viewBox="0 0 360 330" role="img" aria-label="Energiefluss">
+      <g class="lines">
+        <path id="lnPv"   class="ln ln-pv"   d="M180 82 V150"/>
+        <path id="lnGrid" class="ln ln-grid" d="M89 165 H180"/>
+        <path id="lnBat"  class="ln ln-bat"  d="M271 165 H180"/>
+        <path id="lnHome" class="ln ln-home" d="M180 165 V232"/>
+        <circle cx="180" cy="165" r="4" class="hub"/>
+      </g>
+      <g class="node node-pv" transform="translate(180 48)">
+        <circle r="34" class="node-bg"/>
+        <g class="ico"><circle r="7"/><path d="M0-15v4M0 11v4M-15 0h4M11 0h4M-10.6-10.6l2.8 2.8M7.8 7.8l2.8 2.8M-10.6 10.6l2.8-2.8M7.8-7.8l2.8-2.8"/></g>
+        <text class="val" x="48" y="-4" id="vPv">–</text>
+        <text class="lbl" x="48" y="14">Produktion</text>
+      </g>
+      <g class="node node-grid" transform="translate(55 165)">
+        <circle r="34" class="node-bg"/>
+        <g class="ico"><path d="M-8 14L0-14L8 14M-5.5 2h11M-7.5-5h15M-4 8l8-6M4 8l-8-6"/></g>
+        <text class="val" x="0" y="58" text-anchor="middle" id="vGrid">–</text>
+        <text class="lbl" x="0" y="76" text-anchor="middle" id="lGrid">Netz</text>
+      </g>
+      <g class="node node-bat" id="nodeBat" transform="translate(305 165)">
+        <circle r="34" class="node-bg"/>
+        <g class="ico"><rect x="-7" y="-11" width="14" height="23" rx="2"/><path d="M-3-14h6"/><rect id="batFill" x="-4.5" y="9.5" width="9" height="0" class="fill"/></g>
+        <text class="val" x="0" y="58" text-anchor="middle" id="vBat">–</text>
+        <text class="lbl" x="0" y="76" text-anchor="middle" id="lBat">Batterie</text>
+      </g>
+      <g class="node node-home" transform="translate(180 266)">
+        <circle r="34" class="node-bg"/>
+        <g class="ico"><path d="M-12 1L0-10L12 1M-8.5-2v12h17v-12M-2.5 10v-6h5v6"/></g>
+        <text class="val" x="48" y="-4" id="vHome">–</text>
+        <text class="lbl" x="48" y="14">Verbrauch</text>
+      </g>
+    </svg>
+  </section>
+
+  <section class="today" aria-labelledby="todayTitle">
+    <div class="section-head">
+      <h2 id="todayTitle">Heute</h2>
+      <span class="muted" id="todayDate"></span>
+    </div>
+    <div class="tiles">
+      <div class="tile t-pv"><span class="t-lbl">Produziert</span><span class="t-val"><b id="tPv">–</b> kWh</span></div>
+      <div class="tile t-home"><span class="t-lbl">Verbraucht</span><span class="t-val"><b id="tHome">–</b> kWh</span></div>
+      <div class="tile t-exp"><span class="t-lbl">Eingespeist</span><span class="t-val"><b id="tExp">–</b> kWh</span></div>
+      <div class="tile t-imp"><span class="t-lbl">Vom Netz</span><span class="t-val"><b id="tImp">–</b> kWh</span></div>
+    </div>
+    <div class="rings">
+      <div class="ring" id="ringSelf">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="r-bg" cx="60" cy="60" r="50"/><circle class="r-fg" cx="60" cy="60" r="50"/></svg>
+        <div class="ring-txt"><b class="pct">–</b></div>
+        <p class="ring-name">Eigenverbrauch</p>
+        <p class="ring-help">Anteil Ihres Solarstroms, den Sie selbst nutzen</p>
+      </div>
+      <div class="ring" id="ringAut">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="r-bg" cx="60" cy="60" r="50"/><circle class="r-fg" cx="60" cy="60" r="50"/></svg>
+        <div class="ring-txt"><b class="pct">–</b></div>
+        <p class="ring-name">Autarkie</p>
+        <p class="ring-help">Anteil Ihres Verbrauchs, den die Anlage deckt</p>
+      </div>
+    </div>
+    <p class="extra" id="extra" hidden></p>
+  </section>
+
+  <section class="history" aria-labelledby="histTitle">
+    <div class="section-head">
+      <h2 id="histTitle">Verlauf</h2>
+      <div class="tabs" role="tablist" aria-label="Zeitraum">
+        <button role="tab" id="tab-day" data-range="day" aria-selected="true">Tag</button>
+        <button role="tab" id="tab-week" data-range="week" aria-selected="false">Woche</button>
+        <button role="tab" id="tab-month" data-range="month" aria-selected="false">Monat</button>
+        <button role="tab" id="tab-year" data-range="year" aria-selected="false">Jahr</button>
+      </div>
+    </div>
+    <div class="hist-nav">
+      <button class="nav-btn" id="prev" aria-label="Zurück">‹</button>
+      <span id="histLabel">–</span>
+      <button class="nav-btn" id="next" aria-label="Weiter">›</button>
+    </div>
+    <div class="legend">
+      <span class="lg lg-pv">Produktion</span>
+      <span class="lg lg-home">Verbrauch</span>
+    </div>
+    <div class="chart-box" id="chartBox">
+      <svg id="chart" class="chart" role="img" aria-label="Verlaufsdiagramm"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <p class="hist-sum muted" id="histSum"></p>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div>
+      <p class="foot-title">Ihre Anlage</p>
+      <p id="plantFacts" class="muted">–</p>
+      <p id="totals" class="muted"></p>
+    </div>
+    <div>
+      <p class="foot-title">Installiert von <span id="instName">Solarmaa GmbH</span></p>
+      <p id="instContact" class="muted"></p>
+    </div>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

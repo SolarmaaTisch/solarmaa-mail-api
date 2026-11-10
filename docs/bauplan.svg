@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" font-family="Inter, system-ui, sans-serif" font-size="13">
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="32" y="40" font-size="20" font-weight="700" fill="#212325">Solarmaa Energie-Dashboard · Bauplan / Prinzipschema</text>
+  <text x="32" y="62" fill="#6b6d70">Raspberry Pi auf Hutschiene im Verteiler, Datenabfrage über das Hausnetz (Modbus TCP / SunSpec)</text>
+
+  <!-- Verteiler -->
+  <rect x="32" y="90" width="520" height="380" rx="10" fill="#f5f3f8" stroke="#212325" stroke-width="1.5"/>
+  <text x="48" y="114" font-weight="700" fill="#212325">Verteiler (Unterverteilung / Multimediafeld)</text>
+  <!-- Hutschiene -->
+  <rect x="52" y="236" width="480" height="14" fill="#c9cbd0"/>
+  <text x="528" y="268" text-anchor="end" font-size="11" fill="#6b6d70">TS35</text>
+
+  <!-- LS -->
+  <rect x="72" y="170" width="44" height="130" rx="4" fill="#ffffff" stroke="#212325" stroke-width="1.5"/>
+  <text x="94" y="196" text-anchor="middle" font-weight="700">LS</text>
+  <text x="94" y="212" text-anchor="middle" font-size="10" fill="#6b6d70">nach</text>
+  <text x="94" y="224" text-anchor="middle" font-size="10" fill="#6b6d70">NIN</text>
+  <text x="72" y="320" font-size="11">Q1</text>
+
+  <!-- Netzteil -->
+  <rect x="150" y="170" width="84" height="130" rx="4" fill="#ffffff" stroke="#ff6b00" stroke-width="2"/>
+  <text x="192" y="194" text-anchor="middle" font-weight="700">Netzteil</text>
+  <text x="192" y="212" text-anchor="middle" font-size="11">230 V AC</text>
+  <text x="192" y="226" text-anchor="middle" font-size="11">→ 5 V DC</text>
+  <text x="192" y="284" text-anchor="middle" font-size="10" fill="#6b6d70">min. 3 A</text>
+  <text x="236" y="320" font-size="11">T1</text>
+
+  <!-- Pi -->
+  <rect x="270" y="160" width="190" height="150" rx="6" fill="#ffffff" stroke="#b279d7" stroke-width="2.5"/>
+  <text x="365" y="186" text-anchor="middle" font-weight="700">Raspberry Pi</text>
+  <text x="365" y="203" text-anchor="middle" font-size="11">im Hutschienengehäuse</text>
+  <rect x="300" y="218" width="130" height="58" rx="4" fill="#efe4f7"/>
+  <text x="365" y="242" text-anchor="middle" font-size="11">Solarmaa-Software</text>
+  <text x="365" y="258" text-anchor="middle" font-size="11">Web-App · Port 80</text>
+  <text x="282" y="298" font-size="10" fill="#6b6d70">Speisung 5 V (USB-C)</text>
+  <text x="440" y="298" text-anchor="end" font-size="10" fill="#6b6d70">LAN</text>
+  <text x="365" y="330" text-anchor="middle" font-size="11">A1</text>
+
+  <!-- Zuleitung: L über Q1, N und PE direkt auf T1 (Eingang unten) -->
+  <path d="M40 132 H94 V170" fill="none" stroke="#8b5a2b" stroke-width="2.5"/>
+  <path d="M94 300 V346 H176 V300" fill="none" stroke="#8b5a2b" stroke-width="2.5"/>
+  <path d="M40 360 H196 V300" fill="none" stroke="#2f6fd6" stroke-width="2.5"/>
+  <path d="M40 374 H216 V300" fill="none" stroke="#3b9b3b" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <text x="46" y="126" font-size="11" fill="#8b5a2b">L</text>
+  <text x="46" y="354" font-size="11" fill="#2f6fd6">N</text>
+  <text x="46" y="388" font-size="11" fill="#3b9b3b">PE</text>
+
+  <!-- 5 V Ausgang auf den Pi -->
+  <path d="M234 262 H270" fill="none" stroke="#d12a2a" stroke-width="2.5"/>
+  <path d="M234 280 H270" fill="none" stroke="#212325" stroke-width="2.5"/>
+  <text x="238" y="256" font-size="10" fill="#d12a2a">+5 V</text>
+  <text x="238" y="294" font-size="10" fill="#212325">0 V</text>
+
+  <!-- Trennung -->
+  <path d="M250 110 V460" stroke="#ff6b00" stroke-width="1.5" stroke-dasharray="3 5"/>
+  <text x="140" y="412" text-anchor="middle" font-size="11" fill="#ff6b00">230 V Bereich</text>
+  <text x="380" y="412" text-anchor="middle" font-size="11" fill="#ff6b00">Kleinspannung (SELV)</text>
+  <text x="290" y="430" font-size="11" fill="#6b6d70">Abdeckung bleibt geschlossen; Pi nur über Netzwerk bedient.</text>
+  <text x="290" y="446" font-size="11" fill="#6b6d70">Abstand/Abschottung 230 V ↔ SELV gemäss NIN.</text>
+
+  <!-- LAN aus dem Verteiler -->
+  <path d="M440 310 V360 H620" fill="none" stroke="#5566b8" stroke-width="3"/>
+  <text x="470" y="352" font-size="11" fill="#5566b8">LAN-Kabel (Cat 6)</text>
+
+  <!-- Router -->
+  <rect x="620" y="320" width="130" height="80" rx="8" fill="#ffffff" stroke="#5566b8" stroke-width="2"/>
+  <text x="685" y="352" text-anchor="middle" font-weight="700">Router</text>
+  <text x="685" y="370" text-anchor="middle" font-size="11">Kunden-Netz</text>
+  <text x="685" y="386" text-anchor="middle" font-size="10" fill="#6b6d70">DHCP-Reservation</text>
+
+  <!-- Wechselrichter -->
+  <rect x="790" y="140" width="140" height="90" rx="8" fill="#ffffff" stroke="#ff6b00" stroke-width="2"/>
+  <text x="860" y="170" text-anchor="middle" font-weight="700">Wechselrichter</text>
+  <text x="860" y="188" text-anchor="middle" font-size="11">Modbus TCP</text>
+  <text x="860" y="204" text-anchor="middle" font-size="11">SunSpec, Port 502</text>
+  <path d="M750 340 H806 V230" fill="none" stroke="#5566b8" stroke-width="3"/>
+  <text x="814" y="330" font-size="11" fill="#5566b8">LAN / WLAN</text>
+
+  <!-- Smart Meter -->
+  <rect x="790" y="40" width="140" height="66" rx="8" fill="#ffffff" stroke="#212325" stroke-width="1.5"/>
+  <text x="860" y="68" text-anchor="middle" font-weight="700">Smart Meter</text>
+  <text x="860" y="86" text-anchor="middle" font-size="11">am Netzanschluss</text>
+  <path d="M860 106 V140" stroke="#212325" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="868" y="128" font-size="10" fill="#6b6d70">RS485 (Hersteller)</text>
+
+  <!-- Speicher -->
+  <rect x="822" y="250" width="112" height="50" rx="8" fill="#ffffff" stroke="#5a9a2e" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="878" y="272" text-anchor="middle" font-weight="700">Speicher</text>
+  <text x="878" y="288" text-anchor="middle" font-size="10" fill="#6b6d70">optional</text>
+  <path d="M878 230 V250" stroke="#5a9a2e" stroke-width="2" stroke-dasharray="4 3"/>
+
+  <!-- Handy -->
+  <rect x="640" y="450" width="90" height="120" rx="14" fill="#ffffff" stroke="#b279d7" stroke-width="2.5"/>
+  <text x="685" y="500" text-anchor="middle" font-weight="700">Kunde</text>
+  <text x="685" y="518" text-anchor="middle" font-size="10">Handy / Tablet</text>
+  <text x="685" y="534" text-anchor="middle" font-size="10">Browser / App</text>
+  <path d="M685 400 V450" stroke="#b279d7" stroke-width="2" stroke-dasharray="4 4"/>
+  <text x="694" y="430" font-size="10" fill="#b279d7">WLAN</text>
+  <text x="750" y="500" font-size="11" fill="#212325">http://solarmaa.local</text>
+  <text x="750" y="516" font-size="11" fill="#6b6d70">oder feste IP, QR-Code-Kleber</text>
+
+  <!-- Legende -->
+  <text x="32" y="510" font-weight="700">Bezeichnungen</text>
+  <text x="32" y="530" font-size="11">Q1 Leitungsschutzschalter · T1 Hutschienen-Netzteil 5 V · A1 Raspberry Pi im Hutschienengehäuse</text>
+  <text x="32" y="548" font-size="11" fill="#6b6d70">Prinzipschema, kein Ausführungsplan. Absicherung, Querschnitte und Klemmen nach NIN und Datenblättern festlegen.</text>
+  <text x="32" y="566" font-size="11" fill="#6b6d70">Arbeiten im Verteiler nur durch Personen mit Installationsbewilligung nach NIV.</text>
+</svg>

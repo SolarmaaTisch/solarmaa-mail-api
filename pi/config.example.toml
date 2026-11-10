@@ -1,0 +1,55 @@
+# Solarmaa Energie-Dashboard: Konfiguration pro Kundenanlage
+# Kopie liegt auf dem Pi unter /etc/solarmaa-dash/config.toml
+# Nach Änderungen:  sudo systemctl restart solarmaa-dash
+
+[anlage]
+name = "Familie Muster, Biel"
+kwp = 9.6
+inbetriebnahme = "2026-05-01"        # JJJJ-MM-TT
+
+[installateur]
+name = "Solarmaa GmbH"
+telefon = ""                          # wird in der App angezeigt
+email = ""
+web = "www.solarmaa.ch"
+
+[quelle]
+# "demo" für Vorführungen und Werkstatt-Test, "sunspec" für die echte Anlage
+typ = "demo"
+intervall_s = 5
+
+[quelle.wechselrichter]
+host = "192.168.1.50"                 # feste IP oder DHCP-Reservation im Kundenrouter
+port = 502
+unit = 1                              # Modbus-Unit-ID, je nach Hersteller
+
+[quelle.zaehler]
+# Smart Meter am Netzanschlusspunkt (Bezug/Einspeisung).
+# Oft am gleichen Host wie der Wechselrichter, aber mit anderer Unit-ID.
+# Mit "python3 -m solarmaa_dash scan HOST --unit N" prüfen. Leer lassen, wenn keiner vorhanden.
+host = "192.168.1.50"
+port = 502
+unit = 200
+# +1: positiver Zählerwert = Netzbezug.  -1: positiver Wert = Einspeisung.
+# Bei der Inbetriebnahme prüfen (siehe docs/04-inbetriebnahme.md, Schritt 6).
+netz_vorzeichen = 1
+
+[quelle.speicher]
+# Optional: Gerät mit SunSpec-Modell 124 für den Ladezustand. Leer = kein Speicher.
+host = ""
+port = 502
+unit = 1
+
+[auswertung]
+# Optional. Nur ausfüllen, wenn die Werte für diesen Kunden bekannt sind
+# (Tarifblatt des Netzbetreibers). Leer = App zeigt keine Ersparnis / kein CO2.
+# tarif_bezug_rp = 0.0
+# verguetung_rp = 0.0
+# co2_kg_pro_kwh = 0.0
+
+[server]
+port = 80
+
+[daten]
+pfad = "/var/lib/solarmaa-dash/data.db"
+aufbewahrung_tage = 800
