@@ -334,6 +334,18 @@ class SteckerWallboxTests(unittest.TestCase):
             easee._KONTEN.clear()
             srv.shutdown(); srv.server_close()
 
+    def test_nur_wallbox_ohne_zaehler(self):
+        nrg = [0] * 11 + [7200] + [0] * 4
+        srv, host = start_http({"/api/status?filter=nrg,car,wh,eto,amp": {"nrg": nrg, "car": 2, "eto": 1}})
+        try:
+            cfg = config._merge(config.DEFAULTS, {"geraet": [
+                {"name": "Wallbox", "rolle": "verbraucher", "typ": "goe", "host": host}]})
+            s = AnlagenQuelle(cfg).read()
+            self.assertEqual(s.ev_w, 7200.0)
+            self.assertIsNone(s.grid_w)
+        finally:
+            srv.shutdown(); srv.server_close()
+
     def test_wallbox_als_verbraucher(self):
         nrg = [0] * 11 + [3700] + [0] * 4
         srv, host = start_http({"/api/status?filter=nrg,car,wh,eto,amp": {"nrg": nrg, "car": 2, "eto": 1}})

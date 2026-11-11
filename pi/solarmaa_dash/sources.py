@@ -304,7 +304,7 @@ class AnlagenQuelle:
         if self.schaetzer is not None and soc is None:
             soc = self.schaetzer.update(now, bat, grid)
             geschaetzt = soc is not None
-        if grid is None and pv is None and bat is None:
+        if grid is None and pv is None and bat is None and not any(v.get("w") is not None for v in verbraucher):
             from .geraete import GeraetFehler
             raise GeraetFehler("Kein Gerät liefert Daten: " + "; ".join(f"{k}: {v}" for k, v in self.status.items() if v != "ok"))
         return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp, geschaetzt,
