@@ -22,6 +22,7 @@ import datetime as dt
 import json
 import logging
 import mimetypes
+import socket
 import threading
 import time
 from http import HTTPStatus
@@ -436,7 +437,22 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+class DualStackServer(Server):
+    """Lauscht auf IPv4 und IPv6 zugleich (Namen wie pi.local lösen oft nach IPv6 auf)."""
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
 def serve(state: State, app_dir: Path, host: str, port: int) -> Server:
-    httpd = Server((host, port), make_handler(state, app_dir))
+    if host in ("0.0.0.0", "::", ""):
+        try:
+            httpd = DualStackServer(("::", port), make_handler(state, app_dir))
+        except OSError:   # IPv6 auf dem System abgeschaltet
+            httpd = Server(("0.0.0.0", port), make_handler(state, app_dir))
+    else:
+        httpd = Server((host, port), make_handler(state, app_dir))
     threading.Thread(target=httpd.serve_forever, name="http", daemon=True).start()
     return httpd
