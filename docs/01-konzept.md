@@ -66,6 +66,7 @@ Der Pi kombiniert beliebig viele Geräte. Jedes bekommt eine Rolle (PV, Netz, Sp
 | Registerprofil (Modbus TCP) | Huawei SUN2000, GoodWe ET/EH, Sigenergy; weitere als Profil-Datei ohne Programmierung | Profile nach Herstellerdoku bzw. Open-Source-Integrationen, **ungeprüft** |
 | Shelly (lokal, HTTP) | Pro 3EM, 3EM, EM, Pro EM, Plus PM, Pro 4PM u. a., Gen1 bis Gen4 | Feldnamen nach Shelly-API, an echtem Gerät prüfen |
 | smart-me | Cloud-API (API-Key), lokal per Modbus TCP vorbereitet | Feldnamen aus Community-Beispielen, beim ersten Konto prüfen |
+| whatwatt Go | Smart Meter des Netzbetreibers über die Kundenschnittstelle, lokal (REST, Lizenz Plus) | Feldpfade aus der whatwatt-Loxone-Anleitung, Einheiten bei der ersten Anlage prüfen |
 | myStrom Switch | lokal über HTTP (`/report`): Stecker-Verbraucher oder Balkonkraftwerk | Feldnamen aus myStrom-Doku und python-mystrom |
 | Wallboxen | go-e lokal (HTTP-API v2), Easee über die Easee-Cloud | go-e nach offizieller API-Doku; Easee-Einheiten bei der ersten Anlage prüfen |
 

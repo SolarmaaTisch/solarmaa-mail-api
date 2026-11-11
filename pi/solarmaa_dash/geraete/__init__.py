@@ -12,6 +12,7 @@ Unterstützte Typen (config: ``typ``):
   fronius         Fronius Solar API (HTTP), auch ohne Modbus
   shelly          Shelly Gen1 bis Gen4 (Pro 3EM, EM, 3EM, Plus PM, Pro 4PM, ...)
   smartme_cloud   smart-me Zähler über die smart-me Cloud-API
+  whatwatt        whatwatt Go am Smart Meter des Netzbetreibers (lokal, Lizenz Plus)
   mystrom         myStrom Switch (Zwischenstecker), lokal
   goe             go-e Charger (Wallbox), lokale HTTP-API v2
   easee           Easee Wallbox über die Easee-Cloud
@@ -67,6 +68,9 @@ def erstelle(cfg: dict, rolle: str):
     if typ == "smartme_cloud":
         from .smartme import SmartMeCloudZaehler
         return SmartMeCloudZaehler(cfg)
+    if typ == "whatwatt":
+        from .whatwatt import WhatWatt
+        return WhatWatt(cfg)
     if typ == "mystrom":
         from .mystrom import MyStrom
         return MyStrom(cfg)
@@ -79,4 +83,4 @@ def erstelle(cfg: dict, rolle: str):
     if typ == "modbus_profil":
         from .modbus_profil import ModbusProfilGeraet
         return ModbusProfilGeraet(cfg)
-    raise ValueError(f"Unbekannter Gerätetyp {typ!r} (erlaubt: sunspec, fronius, shelly, smartme_cloud, mystrom, goe, easee, modbus_profil)")
+    raise ValueError(f"Unbekannter Gerätetyp {typ!r} (erlaubt: sunspec, fronius, shelly, smartme_cloud, whatwatt, mystrom, goe, easee, modbus_profil)")

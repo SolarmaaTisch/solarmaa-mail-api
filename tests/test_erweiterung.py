@@ -266,6 +266,20 @@ class SteckerWallboxTests(unittest.TestCase):
         finally:
             srv.shutdown(); srv.server_close()
 
+    def test_whatwatt(self):
+        rep = {"report": {"instantaneous_power": {"active": {"positive": {"total": 0.0}, "negative": {"total": 2.35}}},
+                          "energy": {"active": {"positive": {"total": 12345.6}, "negative": {"total": 7890.1}}}}}
+        srv, host = start_http({"/api/v1/report": rep, "/api/v1/system": {"device": {"model": "whatwatt Go"}}})
+        try:
+            from solarmaa_dash.geraete.whatwatt import WhatWatt
+            m = WhatWatt({"host": host}).lesen()                      # Standard kW / kWh
+            self.assertAlmostEqual(m.w, -2350.0)                        # Einspeisung
+            self.assertAlmostEqual(m.import_wh, 12345600.0)
+            m2 = WhatWatt({"host": host, "leistung_einheit": "W", "energie_einheit": "Wh"}).lesen()
+            self.assertAlmostEqual(m2.w, -2.35)
+        finally:
+            srv.shutdown(); srv.server_close()
+
     def test_goe(self):
         nrg = [230, 231, 229, 0, 16, 16, 16, 3680, 3690, 3670, 0, 11040, 99, 99, 99, 0]
         srv, host = start_http({"/api/status?filter=nrg,car,wh,eto,amp":

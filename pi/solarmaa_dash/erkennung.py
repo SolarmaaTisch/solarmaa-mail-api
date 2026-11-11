@@ -4,7 +4,7 @@
   python3 -m solarmaa_dash erkennen --netz 10.0.0.0/24 --toml vorschlag.toml
 
 Ablauf pro Adresse:
-  1. Port 80 offen  → Shelly (/shelly), myStrom (/report), go-e (/api/status),
+  1. Port 80 offen  → Shelly (/shelly), whatwatt (/api/v1/system), myStrom (/report), go-e (/api/status),
                       Fronius Solar API (/solar_api/GetAPIVersion.cgi)
   2. Port 502 oder 1502 offen → SunSpec-Marker bei mehreren Unit-IDs; sonst Registerprofile mit
                       [erkennung]-Abschnitt (Huawei, GoodWe, Sigenergy, ...)
@@ -17,6 +17,7 @@ sich bei frei montierbaren Messgeräten wie Shelly nicht sicher erkennen: Vorsch
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import socket
 import tomllib
@@ -117,6 +118,14 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
                               "hinweis": "Rolle prüfen: Netzanschluss, PV-Abgang oder Einheit?"})
         except GeraetFehler:
             pass
+        if not funde:
+            try:
+                j = get_json(f"http://{host}/api/v1/system", timeout=2)
+                if isinstance(j, dict) and "whatwatt" in json.dumps(j).lower():
+                    funde.append({"host": host, "typ": "whatwatt", "modell": "whatwatt Go", "rolle": "netz",
+                                  "hinweis": "Lizenz Plus nötig; Einheiten (kW/W) mit Zähleranzeige prüfen"})
+            except GeraetFehler:
+                pass
         if not funde:
             try:
                 j = get_json(f"http://{host}/report", timeout=2)

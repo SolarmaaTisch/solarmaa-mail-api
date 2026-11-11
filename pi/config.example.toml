@@ -27,7 +27,7 @@ intervall_s = 5
 #          speicher  Batterie (+ Entladen, − Laden) und/oder Ladezustand
 #          anlage    Gerät liefert PV, Netz und Batterie auf einmal (Fronius, Huawei, GoodWe, Sigenergy)
 #          verbraucher  einzeln gemessenes Gerät (Wallbox, Stecker); wird zusätzlich angezeigt
-# Typen:   sunspec, fronius, shelly, smartme_cloud, mystrom, goe, easee, modbus_profil
+# Typen:   sunspec, fronius, shelly, smartme_cloud, whatwatt, mystrom, goe, easee, modbus_profil
 #
 # Beispiel A: Wechselrichter mit SunSpec (SMA, SolarEdge, Kostal, Fronius, ...) + Netzzähler
 # [[geraet]]
@@ -77,6 +77,13 @@ intervall_s = 5
 # vorzeichen = -1          # Laden zeigt der Shelly als Bezug
 # soc_schaetzen = true     # Ladezustand schätzen (App zeigt «ca.»), siehe docs/09-evolium.md
 # kapazitaet_kwh = 10
+#
+# Beispiel G: Netzanschluss über whatwatt Go am Smart Meter (Lizenz Plus)
+# [[geraet]]
+# name = "Smart Meter"
+# rolle = "netz"
+# typ = "whatwatt"
+# host = "192.168.1.70"
 #
 # Beispiel F: Wallbox und Stecker (Rolle «verbraucher», im Hausverbrauch enthalten)
 # [[geraet]]
