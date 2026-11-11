@@ -1,0 +1,24 @@
+# Huawei Gewerbespeicher (LUNA2000 C&I, z. B. LUNA2000-215) am SmartLogger 3000 – VORLAGE
+#
+# Status: Registerliste NOCH NICHT eingetragen. Öffentlich war keine verlässliche Liste für
+# SmartLogger 3000 + LUNA2000-215 zu finden. Benötigt wird die Huawei-Datei
+# «SmartLogger ModBus Interface Definitions» (bzw. «Modbus Port Definitions» der ESS-Version)
+# passend zur Firmware – erhältlich über den Huawei-Installateur-Support.
+#
+# Voraussetzungen laut Huawei-Handbuch: Modbus TCP am SmartLogger aktivieren, feste IP,
+# «Logical Addressing». Die Unit-ID des Speichers ist im SmartLogger einsehbar.
+#
+# Benötigte Werte, dann [werte.*] wie in huawei_sun2000.toml eintragen:
+#   soc        Ladezustand (%)
+#   battery_w  Lade-/Entladeleistung (Solarmaa: + Entladen, − Laden)
+# Rolle im Config: "speicher".
+#
+# Bis dahin: Speicher-Abgang mit Shelly Pro 3EM messen (rolle = "speicher",
+# soc_schaetzen = true, kapazitaet_kwh = 215), siehe docs/09-evolium.md.
+
+name = "Huawei LUNA2000 C&I (SmartLogger 3000)"
+vorlage = true
+geprueft = false
+rolle = "speicher"
+funktion = 3
+wortfolge = "gross"

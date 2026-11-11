@@ -428,6 +428,14 @@
     $("meterList").innerHTML = (w.haus_zaehler || []).map((z) => `<li><span><span class="${z.fehler ? "dot-err" : "dot-ok"}"></span>${esc(z.name)}</span><span class="muted">${z.fehler ? esc(z.fehler) : "ok"}</span></li>`).join("") || '<li class="muted">Keine Hauszähler eingerichtet</li>';
     renderScan(w.erkennung || {});
     renderAbregelung(w.abregelung);
+    renderAlarme(w.alarme);
+  }
+
+  function renderAlarme(a) {
+    if (!a) return;
+    const k = [a.lampe && "rote Lampe", a.push && "Push", a.email && "E-Mail"].filter(Boolean);
+    $("alarmKanaele").textContent = (k.length ? `Meldung per ${k.join(", ")}.` : "Keine Benachrichtigung eingerichtet: Alarme stehen nur hier und im Protokoll.") + (a.versandfehler ? ` Letzter Versandfehler: ${a.versandfehler}` : "");
+    $("alarmListe").innerHTML = (a.offen || []).map((x) => `<li><span><span class="${x.stufe === "kritisch" ? "dot-err" : "dot-warn"}"></span>${esc(x.text)}</span><span class="muted">seit ${new Date(x.seit * 1000).toLocaleString(L, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}</span></li>`).join("") || '<li class="muted">Keine offenen Alarme</li>';
   }
 
   const MODUS = { aus: "aus", simulation: "Simulation", test: "Test", auto: "Automatik" };
@@ -436,7 +444,9 @@
     if (!a) return;
     $("abrModus").textContent = MODUS[a.modus] || a.modus;
     const zeit = (ts) => new Date(ts * 1000).toLocaleString(L, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    const FB = { halten: "letzte Grenze halten", einspeisung: "Einspeisung freigeben", aus: "Anlage aus" };
     $("abrInfo").innerHTML = `<dt>Zustand</dt><dd>${a.aktiv ? `<b>abgeregelt</b>, ${esc(a.grund)}` : "normal"}</dd>
+      <dt>Bei Ausfall</dt><dd>${esc(FB[a.fallback] || a.fallback)}${a.fallback_aktiv ? " – <b>jetzt aktiv</b>" : ""}</dd>
       <dt>Preis jetzt</dt><dd>${a.preis == null ? "unbekannt" : nf1.format(a.preis) + " €/MWh"} (Schwelle ${nf1.format(a.schwelle)})</dd>
       <dt>Grenze</dt><dd>${fmtW(a.grenze_w)} von ${fmtW(a.nenn_w)}</dd>
       <dt>Nächster negativer Preis</dt><dd>${a.naechster_negativ ? zeit(a.naechster_negativ) : "keiner bekannt"}</dd>
@@ -474,6 +484,13 @@
     if (s.laeuft) scanTimer = setTimeout(async () => { const w = await guard(() => api.wartung()); if (w) renderScan(w.erkennung || {}); }, 2000);
   }
 
+  $("alarmTestBtn").addEventListener("click", async () => {
+    const b = $("alarmTestBtn");
+    b.disabled = true;
+    try { await guard(() => (DEMO ? Promise.resolve() : realApi.req("POST", "/api/wartung/alarmtest"))); b.textContent = "Gesendet"; }
+    catch (e) { b.textContent = e.message; }
+    setTimeout(() => { b.textContent = "Testmeldung senden"; b.disabled = false; }, 3000);
+  });
   $("scanBtn").addEventListener("click", async () => { await guard(() => api.erkennen()); renderScan({ laeuft: true, fortschritt: "" }); });
   $("copyToml").addEventListener("click", async () => {
     const t = $("tomlText").textContent;

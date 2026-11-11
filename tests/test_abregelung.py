@@ -15,6 +15,17 @@ from solarmaa_dash.preise import Preise, parse_csv, parse_entsoe  # noqa: E402
 from solarmaa_dash.sources import Snapshot  # noqa: E402
 from test_dash import FakeModbus  # noqa: E402
 
+class FakeAlarme:
+    def __init__(self):
+        self.offen = {}
+
+    def setzen(self, key, text, stufe="kritisch"):
+        self.offen[key] = text
+
+    def loeschen(self, key):
+        self.offen.pop(key, None)
+
+
 XML = """<?xml version="1.0" encoding="UTF-8"?>
 <Publication_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:3">
  <TimeSeries><Period>
@@ -86,16 +97,57 @@ class AbregelTests(unittest.TestCase):
         self.assertFalse(a.aktiv)
         self.assertEqual([v for _, v in self.limits()[-4:]], [60000] * 4)
 
-    def test_zaehlerausfall_gibt_frei(self):
+    def _ausfall(self, fallback):
         t = time.time()
+        self.cfg["abregelung"]["fallback"] = fallback
+        self.cfg["abregelung"]["fallback_nach_s"] = 120
         self.preise.daten = {int(t) - 60: (int(t) + 3600, -5.0)}
-        a = Abregelung(self.cfg, self.preise)
+        alarme = FakeAlarme()
+        a = Abregelung(self.cfg, self.preise, alarme=alarme)
         a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
         a.tick(Snapshot(t + 10, 60000, -30000, 30000), jetzt=t + 10)
+        grenze_vorher = a.grenze_w
+        a.tick(None, jetzt=t + 60)                   # Ausfall, noch innerhalb der Wartezeit
+        self.assertIn("zaehler", alarme.offen)
+        self.assertEqual(a.grenze_w, grenze_vorher)  # letzte Grenze wird gehalten
+        a.tick(None, jetzt=t + 200)                  # Wartezeit vorbei
+        return a, alarme, grenze_vorher, t
+
+    def test_ausfall_halten(self):
+        a, alarme, grenze, _ = self._ausfall("halten")
         self.assertTrue(a.aktiv)
-        a.tick(None, jetzt=t + 100)                  # 90 s keine Messung
+        self.assertEqual(a.grenze_w, grenze)
+        self.assertEqual(a.fallback_aktiv, "halten")
+
+    def test_ausfall_einspeisung(self):
+        a, _, _, _ = self._ausfall("einspeisung")
+        self.assertEqual([v for _, v in self.limits()[-4:]], [60000] * 4)
+
+    def test_ausfall_aus_und_ende_ohne_zaehler(self):
+        a, alarme, _, t = self._ausfall("aus")
+        self.assertEqual([v for _, v in self.limits()[-4:]], [0] * 4)
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, 20.0)}   # Preis positiv, Zähler weiterhin weg
+        a.tick(None, jetzt=t + 300)
         self.assertFalse(a.aktiv)
         self.assertEqual([v for _, v in self.limits()[-4:]], [60000] * 4)
+        self.assertNotIn("zaehler", alarme.offen)
+
+    def test_zaehler_kommt_zurueck(self):
+        a, alarme, _, t = self._ausfall("aus")
+        a.tick(Snapshot(t + 300, 0, 30000, 30000), jetzt=t + 300)
+        self.assertNotIn("zaehler", alarme.offen)
+        self.assertIsNone(a.fallback_aktiv)
+        self.assertGreater(a.grenze_w, 0)            # Regler fährt wieder hoch (Netzbezug 30 kW)
+
+    def test_schreibfehler_alarmiert(self):
+        t = time.time()
+        self.cfg["abregelung"]["wechselrichter"][0]["port"] = 1   # nicht erreichbar
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, -5.0)}
+        alarme = FakeAlarme()
+        a = Abregelung(self.cfg, self.preise, alarme=alarme)
+        a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
+        self.assertIn("wr:WR1", alarme.offen)
+        self.assertNotIn("wr:WR2", alarme.offen)
 
     def test_simulation_schreibt_nichts(self):
         t = time.time()
@@ -114,6 +166,67 @@ class AbregelTests(unittest.TestCase):
         a = Abregelung(self.cfg, self.preise)
         a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
         self.assertFalse(a.aktiv)                    # negativer Preis, aber kein Testfenster
+
+
+class BenachrichtigungTests(unittest.TestCase):
+    def test_lampe_push_email(self):
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from unittest import mock
+        aufrufe = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):  # noqa: N802
+                aufrufe.append(("GET", self.path, None, {}))
+                body = json.dumps({"gen": 2}).encode() if self.path == "/shelly" else b"{}"
+                self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):  # noqa: N802
+                n = int(self.headers.get("Content-Length") or 0)
+                aufrufe.append(("POST", self.path, self.rfile.read(n).decode(), dict(self.headers)))
+                self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers()
+                self.wfile.write(b"{}")
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        host = f"127.0.0.1:{srv.server_address[1]}"
+        mails = []
+
+        class FakeSMTP:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def starttls(self, **k): pass
+            def login(self, u, p): mails.append(("login", u))
+            def send_message(self, m): mails.append(("mail", m["Subject"], m["To"]))
+
+        from solarmaa_dash.benachrichtigung import Alarme
+        cfg = {"anlage": {"name": "Feldtest"}, "benachrichtigung": {
+            "lampe": {"typ": "shelly", "host": host},
+            "push": {"server": f"http://{host}", "thema": "solarmaa-test"},
+            "email": {"smtp_host": "smtp.example.ch", "benutzer": "u", "passwort": "p",
+                      "absender": "pi@example.ch", "empfaenger": ["service@example.ch"]}}}
+        try:
+            with mock.patch("smtplib.SMTP", FakeSMTP):
+                a = Alarme(cfg)
+                a.setzen("zaehler", "Netzzähler fehlt")
+                a.setzen("zaehler", "Netzzähler fehlt")         # kein zweites Senden
+                a.loeschen("zaehler")
+                time.sleep(1.5)
+            posts = [x for x in aufrufe if x[0] == "POST"]
+            self.assertEqual(len(posts), 2)                     # Störung + Behoben
+            self.assertEqual(posts[0][1], "/solarmaa-test")
+            self.assertIn("Netzzähler fehlt", posts[0][2])
+            self.assertEqual(posts[0][3].get("Priority"), "5")
+            schalter = [x[1] for x in aufrufe if x[1].startswith("/rpc/Switch.Set")]
+            self.assertEqual(schalter, ["/rpc/Switch.Set?id=0&on=true", "/rpc/Switch.Set?id=0&on=false"])
+            self.assertEqual([m[1] for m in mails if m[0] == "mail"], ["Feldtest: Störung", "Feldtest: Behoben"])
+        finally:
+            srv.shutdown(); srv.server_close()
 
 
 if __name__ == "__main__":

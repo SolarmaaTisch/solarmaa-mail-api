@@ -62,3 +62,28 @@ def get_json(url: str, timeout: float = 5.0, user: str | None = None, password: 
         raise GeraetFehler(f"{url}: HTTP {e.code}{hint}") from e
     except (urllib.error.URLError, OSError, ValueError) as e:
         raise GeraetFehler(f"{url}: {getattr(e, 'reason', e)}") from e
+
+
+def get_raw(url: str, timeout: float = 5.0, user: str | None = None, password: str | None = None,
+            headers: dict | None = None) -> int:
+    """GET ohne JSON-Auswertung (z. B. zum Schalten). Gibt den HTTP-Status zurück."""
+    hdrs = {"User-Agent": "SolarmaaDash/1.4", **(headers or {})}
+    req = urllib.request.Request(url, headers=hdrs)
+    try:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            www = e.headers.get("WWW-Authenticate", "") if e.code == 401 else ""
+            if not (www and password):
+                raise
+            name = "admin" if user is None else user
+            auth = _digest_header(www, "GET", url, name, password) if www.lower().startswith("digest") else \
+                "Basic " + base64.b64encode(f"{name}:{password}".encode()).decode()
+            with urllib.request.urlopen(urllib.request.Request(url, headers={**hdrs, "Authorization": auth}),
+                                        timeout=timeout) as r:
+                return r.status
+    except urllib.error.HTTPError as e:
+        raise GeraetFehler(f"{url}: HTTP {e.code}") from e
+    except (urllib.error.URLError, OSError) as e:
+        raise GeraetFehler(f"{url}: {getattr(e, 'reason', e)}") from e

@@ -20,10 +20,60 @@ flowchart LR
    - Alle 10 Sekunden passt er die Gesamtgrenze an und verteilt sie nach Nennleistung auf die Wechselrichter.
 3. Ist der Preis wieder positiv, setzt er alle Wechselrichter auf Nennleistung.
 
-**Sicherheitsregeln im Programm:**
-- Fällt der Netzzähler länger als 60 s aus, gibt der Pi frei: lieber kurz einspeisen als ohne Messung blind regeln.
-- Beim Beenden des Dienstes (Update, Neustart) gibt er ebenfalls frei.
-- Er schreibt nur bei Änderungen über 1 kW oder als Lebenszeichen alle 60 s, nicht im Sekundentakt.
+**Ausfallverhalten (wählbar):** Liefert der Netzzähler während negativer Preise keine Daten, hält der Pi zuerst die letzte Grenze. Nach `fallback_nach_s` (Standard 120 s) wendet er das gewählte Verhalten an:
+
+| `fallback` | Was passiert | Wann sinnvoll |
+|---|---|---|
+| `halten` (Standard) | letzte Grenze bleibt, bis der Zähler zurück ist oder der Preis wieder positiv wird | meist: Ausfälle sind kurz, die Grenze stimmt ungefähr |
+| `einspeisung` | alle Wechselrichter auf Nennleistung | Produktion wichtiger als die Kosten der negativen Viertelstunden |
+| `aus` | alle Wechselrichter auf 0 W, auch kein Eigenverbrauch aus PV | negative Preise sehr teuer, Eigenverbrauch klein |
+
+Dasselbe gilt, wenn der Dienst während negativer Preise beendet wird (Update, Neustart). Wird der Preis wieder positiv, gibt der Pi frei, dafür braucht er keinen Zähler. Was der **Wechselrichter** macht, wenn der Pi ganz ausfällt und keine Vorgaben mehr kommen, bestimmt seine eigene Einstellung (siehe unten, mit Kostal klären).
+
+**Benachrichtigung:** Jeder Ausfall wird gemeldet:
+- **rote Lampe** über einen Shelly (Gen1 bis Gen4) oder myStrom-Stecker, leuchtet bei kritischen Alarmen
+- **Push aufs Handy** über ntfy (kostenlose App «ntfy», Thema abonnieren; öffentlicher Server ntfy.sh oder eigener)
+- **E-Mail** über einen SMTP-Server (z. B. das Solarmaa-Postfach)
+- **Lebenszeichen:** Der Pi meldet sich alle 5 Minuten bei einem Überwachungsdienst (z. B. healthchecks.io). Fällt der Pi selbst aus, alarmiert dieser Dienst. Der Pi kann seinen eigenen Ausfall nicht melden.
+
+Gemeldet werden: Netzzähler fehlt während negativer Preise (kritisch), Wechselrichter nimmt Vorgabe nicht an (kritisch), Anlage liefert länger als 10 min keine Werte (kritisch), ein Gerät fällt länger als 10 min aus (Warnung), Preise fehlen (Warnung). Offene Alarme werden alle 12 h erneut gemeldet, Behebungen ebenfalls.
+
+```toml
+[benachrichtigung]
+erinnerung_h = 12
+lebenszeichen_url = "https://hc-ping.com/<uuid>"   # optional
+
+[benachrichtigung.lampe]
+typ = "shelly"              # oder "mystrom"
+host = "192.168.1.88"
+kanal = 0
+
+[benachrichtigung.push]
+server = "https://ntfy.sh"
+thema = "solarmaa-kunde-xyz-7f3k"   # schwer erratbar wählen, Thema ist öffentlich
+
+[benachrichtigung.email]
+smtp_host = "mail.example.ch"
+smtp_port = 587
+sicherheit = "starttls"     # starttls | ssl | keine
+benutzer = "pi@solarmaa.ch"
+passwort = ""
+absender = "pi@solarmaa.ch"
+empfaenger = ["service@solarmaa.ch"]
+```
+
+Test: `python3 -m solarmaa_dash alarm-test -c /etc/solarmaa-dash/config.toml` oder in der Wartung «Testmeldung senden». Die Lampe leuchtet dabei 5 Sekunden. Im Dashboard sieht der Kunde bei einer kritischen Störung «Störung erkannt. Solarmaa wurde benachrichtigt.»
+
+**Weitere Regeln:** Der Pi schreibt nur bei Änderungen über 1 kW oder als Lebenszeichen alle 60 s, nicht im Sekundentakt.
+
+## Huawei-Gewerbespeicher
+
+Ein Speicher hilft bei negativen Preisen: Er lädt den Überschuss, statt ihn abzuregeln.
+
+- **Zusammenspiel:** Der Huawei-Speicher regelt mit seinem eigenen Zähler auf Eigenverbrauch und lädt zuerst. Die Abregelung des Pi greift nur noch für den Rest, der trotzdem ins Netz ginge. Weil beide auf den Netzanschluss regeln, beim Test darauf achten, dass sie nicht gegeneinander schwingen. Gegebenenfalls `puffer_w` erhöhen oder `verstaerkung` senken.
+- **Anzeige:** Gewerbespeicher von Huawei (LUNA2000 C&I) hängen am SmartLogger 3000. Die Registerliste dafür gibt es nicht öffentlich. Vorlage: `pi/solarmaa_dash/profile/huawei_smartlogger_ess.toml`. Mit der Huawei-Datei «SmartLogger ModBus Interface Definitions» (über den Huawei-Installateur-Support) trage ich Ladezustand und Leistung ein.
+- **Bis dahin:** den Speicher-Abgang mit einem Shelly Pro 3EM (für die Stromstärke passende Wandler) messen, mit geschätztem Ladezustand wie bei Evolium.
+- **Später möglich:** Bei negativen Preisen den Speicher gezielt aus dem Netz laden (der Kunde wird dafür bezahlt). Dazu muss der Pi den SmartLogger steuern («Charge/Discharge based on grid dispatch»). Das braucht eine eigene Prüfung.
 
 ## Wichtig vor dem Feldtest
 
@@ -82,13 +132,14 @@ profil = "kostal_piko_ci"
 # … gleich für 2, 3, 4
 ```
 
-Weitere Einstellungen: `verstaerkung` (0.6), `schritt_s` (10), `max_ausfall_s` (60), `min_aenderung_w` (1000).
+Weitere Einstellungen: `fallback` (halten | einspeisung | aus), `fallback_nach_s` (120), `verstaerkung` (0.6), `schritt_s` (10), `min_aenderung_w` (1000).
 
 ## Befehle
 
 ```bash
 python3 -m solarmaa_dash preise -c /etc/solarmaa-dash/config.toml     # Preise heute/morgen, markiert Abregelzeiten
 python3 -m solarmaa_dash geraet-test -c /etc/solarmaa-dash/config.toml
+python3 -m solarmaa_dash alarm-test -c /etc/solarmaa-dash/config.toml  # Lampe, Push, E-Mail testen
 journalctl -u solarmaa-dash | grep Abregelung
 ```
 
@@ -97,4 +148,6 @@ journalctl -u solarmaa-dash | grep Abregelung
 - [Kostal PIKO CI Modbus-Beschreibung](https://www.kostal-solar-electric.com/fileadmin/downloadcenter/kse/BA/Protokollbeschreibung/BA_PIKO-CI_KOSTAL-Interface-description-Modbus-Sunspec.pdf) (Registerauszüge über Suchergebnisse)
 - [Kostal PIKO IQ/Plenticore Modbus mit Steuerung](https://www.kostal-solar-electric.com/fileadmin/downloadcenter/kse/BA/Protokollbeschreibung/BA_KOSTAL_Interface_MODBUS-TCP_SunSpec_with_Control.pdf)
 - [ENTSO-E API, Day-Ahead-Preise A44](https://apis.io/apis/entso-e/entso-e-market-data-query-api/), [evcc ENTSO-E](https://docs.evcc.io/en/tariffs/entso-e)
+- [ntfy: Nachrichten senden](https://docs.ntfy.sh/publish/), [Shelly Gen2 Switch](https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Switch/)
+- [Huawei LUNA2000 C&I mit SmartLogger 3000 (Handbuch)](https://ske-solar.com/fileadmin/user_upload/UserManual_LUNA2000-_107-241__C_I-On-Grid-SmartLogger3000_V10_2026-03-30_EN.pdf), [SmartLogger 3000 Modbus (Community)](https://github.com/theyo-tester/ha-smartlogger3000-modbus-config/blob/main/README.md)
 - [Swissolar: Was gilt 2026 für PV](https://www.swissolar.ch/de/news/detail/2026-was-gilt-neu-fuer-photovoltaikanlagen-80786)

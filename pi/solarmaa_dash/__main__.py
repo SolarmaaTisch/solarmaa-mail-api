@@ -61,6 +61,19 @@ def open_all(cfg: dict, db: str | None = None):
     return store, haus, auth, rechnungen
 
 
+def lebenszeichen_loop(state: State, url: str, stop: threading.Event) -> None:
+    """Meldet sich alle 5 Minuten bei einem Überwachungsdienst (z. B. healthchecks.io).
+    Bleibt die Meldung aus (Pi aus, abgestürzt, kein Netz), alarmiert der Dienst."""
+    from .geraete.http import get_raw
+    while not stop.is_set():
+        ok = state.last_ok is not None and time.time() - state.last_ok < 600
+        try:
+            get_raw(url if ok else url.rstrip("/") + "/fail", timeout=10)
+        except Exception as e:  # noqa: BLE001 – nur protokollieren
+            log.debug("Lebenszeichen fehlgeschlagen: %s", e)
+        stop.wait(300)
+
+
 def preis_loop(preise, stop: threading.Event) -> None:
     while not stop.is_set():
         if preise.braucht_update():
@@ -68,8 +81,23 @@ def preis_loop(preise, stop: threading.Event) -> None:
         stop.wait(300)
 
 
+def geraete_alarme(state: State, source, fehler_seit: dict, jetzt: float) -> None:
+    """Alarm, wenn ein Gerät länger als 10 Minuten keine Daten liefert."""
+    for name, st in getattr(source, "status", {}).items():
+        if st == "ok":
+            fehler_seit.pop(name, None)
+            state.alarme.loeschen(f"geraet:{name}")
+        else:
+            seit = fehler_seit.setdefault(name, jetzt)
+            if jetzt - seit > 600:
+                state.alarme.setzen(f"geraet:{name}", f"{name} liefert seit {int((jetzt - seit) / 60)} Minuten "
+                                    f"keine Daten: {st}", "warnung")
+
+
 def poll_loop(state: State, source, stop: threading.Event) -> None:
     interval = float(state.cfg["quelle"]["intervall_s"])
+    fehler_seit: dict[str, float] = {}
+    anlage_fehler_seit: float | None = None
     backoff = interval
     last_prune = 0.0
     while not stop.is_set():
@@ -80,6 +108,9 @@ def poll_loop(state: State, source, stop: threading.Event) -> None:
             state.publish(snap)
             if state.abregelung:
                 state.abregelung.tick(snap)
+            anlage_fehler_seit = None
+            state.alarme.loeschen("anlage")
+            geraete_alarme(state, source, fehler_seit, t0)
             backoff = interval
         except Exception as exc:  # Gerät kurz weg, Netzwerk, ...
             msg = str(exc) or exc.__class__.__name__
@@ -88,6 +119,11 @@ def poll_loop(state: State, source, stop: threading.Event) -> None:
             state.publish(None, msg)
             if state.abregelung:
                 state.abregelung.tick(None)
+            anlage_fehler_seit = anlage_fehler_seit or t0
+            if t0 - anlage_fehler_seit > 600:
+                state.alarme.setzen("anlage", f"Anlage liefert seit {int((t0 - anlage_fehler_seit) / 60)} Minuten "
+                                    f"keine Messwerte: {msg}", "kritisch")
+            geraete_alarme(state, source, fehler_seit, t0)
             backoff = min(backoff * 2, 60.0)
         if t0 - last_prune > 6 * 3600:
             state.store.prune()
@@ -110,13 +146,17 @@ def cmd_run(args) -> int:
     cfg = load_cfg(args.config)
     store, haus, auth, rechnungen = open_all(cfg, args.db)
     source = make_source(cfg)
+    from .benachrichtigung import Alarme, KeineAlarme
     from .wartung import Wartung
     state = State(cfg, store, source.name, source, haus, auth, rechnungen, Wartung(cfg))
+    b = cfg.get("benachrichtigung") or {}
+    eingerichtet = any((b.get(k) or {}).get(f) for k, f in (("lampe", "host"), ("push", "thema"), ("email", "smtp_host")))
+    state.alarme = Alarme(cfg) if eingerichtet else KeineAlarme()
     if cfg["abregelung"].get("modus", "aus") != "aus":
         from .abregelung import Abregelung
         from .preise import Preise
         daten_dir = None if cfg["daten"]["pfad"] == ":memory:" else Path(cfg["daten"]["pfad"]).parent
-        state.abregelung = Abregelung(cfg, Preise(cfg["abregelung"], daten_dir), store)
+        state.abregelung = Abregelung(cfg, Preise(cfg["abregelung"], daten_dir), store, state.alarme)
         log.info("Abregelung aktiv im Modus «%s» für %d Wechselrichter", state.abregelung.modus,
                  len(state.abregelung.wr))
     if haus and haus.demo:
@@ -138,6 +178,9 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     if haus:
         threading.Thread(target=haus_loop, args=(state, stop), name="haus", daemon=True).start()
+    hb = (cfg.get("benachrichtigung") or {}).get("lebenszeichen_url")
+    if hb:
+        threading.Thread(target=lebenszeichen_loop, args=(state, hb, stop), name="lebenszeichen", daemon=True).start()
     if state.abregelung:
         threading.Thread(target=preis_loop, args=(state.abregelung.preise, stop), name="preise", daemon=True).start()
     try:
@@ -261,6 +304,21 @@ def cmd_preise(args) -> int:
     return 0
 
 
+def cmd_alarmtest(args) -> int:
+    from .benachrichtigung import Alarme
+    cfg = load_cfg(args.config)
+    a = Alarme(cfg)
+    print(f"Lampe: {'ja' if a.lampe else 'nein'}, Push: {'ja' if a.push else 'nein'}, "
+          f"E-Mail: {'ja' if a.email else 'nein'}. Sende Testmeldung …")
+    a.test()
+    time.sleep(8 if a.lampe else 3)
+    if a.versandfehler:
+        print(f"Fehler: {a.versandfehler}", file=sys.stderr)
+        return 1
+    print("Gesendet. Lampe sollte 5 Sekunden geleuchtet haben.")
+    return 0
+
+
 def cmd_benutzer(args) -> int:
     cfg = load_cfg(args.config)
     _store, haus, auth, _r = open_all(cfg, args.db)
@@ -330,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     with_cfg(sub.add_parser("geraet-test", help="alle Geräte und Zähler einmal lesen"))
     with_cfg(sub.add_parser("smartme-liste", help="Zähler im smart-me-Konto anzeigen"))
     with_cfg(sub.add_parser("preise", help="Day-Ahead-Preise abrufen und anzeigen"))
+    with_cfg(sub.add_parser("alarm-test", help="Testmeldung an Lampe, Push und E-Mail"))
     er = with_cfg(sub.add_parser("erkennen", help="Geräte im Netz automatisch suchen"))
     er.add_argument("--netz", help="z. B. 192.168.1.0/24 (Standard: Netz des Pi)")
     er.add_argument("--toml", help="Konfigurationsvorschlag in diese Datei schreiben")
@@ -345,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     return {"run": cmd_run, "scan": cmd_scan, "read": cmd_read, "geraet-test": cmd_geraet_test,
-            "smartme-liste": cmd_smartme, "erkennen": cmd_erkennen, "preise": cmd_preise, "benutzer": cmd_benutzer,
+            "smartme-liste": cmd_smartme, "erkennen": cmd_erkennen, "preise": cmd_preise, "alarm-test": cmd_alarmtest, "benutzer": cmd_benutzer,
             "rechnungen-import": cmd_rechnungen}[args.cmd](args)
 
 

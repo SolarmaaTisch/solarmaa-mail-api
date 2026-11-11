@@ -224,6 +224,7 @@
   function renderNow(p) {
     lastMsg = Date.now();
     renderCurtail(p.abregelung);
+    $("alarmBand").hidden = !p.stoerung;
     const st = $("status");
     if (p.status === "ok") {
       st.dataset.state = "ok";

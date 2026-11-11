@@ -184,11 +184,28 @@ modus = "aus"                 # aus | simulation | test | auto
 # puffer_w = 500
 # test_fenster = ["2026-11-20 12:00-12:30"]
 #
+# fallback = "halten"        # bei Zählerausfall: halten | einspeisung | aus
+# fallback_nach_s = 120
+#
 # [[abregelung.wechselrichter]]
 # name = "PIKO CI 60 – 1"
 # host = "192.168.1.81"
 # nennleistung_w = 60000
 # profil = "kostal_piko_ci"
+
+# Alarme (siehe docs/11-abregelung.md): rote Lampe, Push (ntfy), E-Mail, Lebenszeichen
+[benachrichtigung]
+# lebenszeichen_url = "https://hc-ping.com/<uuid>"
+# [benachrichtigung.lampe]
+# typ = "shelly"              # oder "mystrom"
+# host = "192.168.1.88"
+# [benachrichtigung.push]
+# thema = "solarmaa-kunde-xyz-7f3k"
+# [benachrichtigung.email]
+# smtp_host = "mail.example.ch"
+# benutzer = ""
+# passwort = ""
+# empfaenger = ["service@solarmaa.ch"]
 
 [auswertung]
 # Optional. Nur ausfüllen, wenn die Werte für diesen Kunden bekannt sind

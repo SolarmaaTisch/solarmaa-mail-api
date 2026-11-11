@@ -39,6 +39,8 @@ DEFAULTS: dict = {
     "haus": {"aktiv": False},
     # Abregelung bei negativen Day-Ahead-Preisen (siehe docs/11-abregelung.md)
     "abregelung": {"modus": "aus"},
+    # Alarme: rote Lampe (Shelly/myStrom), Push (ntfy), E-Mail – siehe docs/11-abregelung.md
+    "benachrichtigung": {},
     "server": {"host": "0.0.0.0", "port": 80, "app_pfad": ""},
     "daten": {"pfad": "/var/lib/solarmaa-dash/data.db", "aufbewahrung_tage": 800},
 }

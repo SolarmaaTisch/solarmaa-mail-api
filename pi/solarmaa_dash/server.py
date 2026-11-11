@@ -54,6 +54,8 @@ class State:
         self.rechnungen = rechnungen
         self.wartung = wartung
         self.abregelung = None
+        from .benachrichtigung import KeineAlarme
+        self.alarme = KeineAlarme()
         self.latest: Snapshot | None = None
         self.error: str | None = None
         self.last_ok: float | None = None
@@ -80,6 +82,7 @@ class State:
             "fehler": self.error if stale else None,
             "demo": self.source_name == "demo",
             "abregelung": self.abregelung_kurz(),
+            "stoerung": any(a["stufe"] == "kritisch" for a in self.alarme.status()["offen"]),
         }
 
     def abregelung_kurz(self) -> dict | None:
@@ -286,7 +289,8 @@ def make_handler(state: State, app_dir: Path):
                                          state.store.db.execute("SELECT * FROM abregel_log ORDER BY ts DESC LIMIT 50")]
                         abr = {**state.abregelung.status(), "protokoll": protokoll,
                                "preise": state.abregelung.preise.zeitreihe(jetzt - 3 * 3600, jetzt + 36 * 3600)}
-                    return self._json({**state.wartung.status(), "abregelung": abr, "geraete": state.geraete_status(),
+                    return self._json({**state.wartung.status(), "abregelung": abr, "alarme": state.alarme.status(),
+                                       "geraete": state.geraete_status(),
                                        "geraete_fehler": getattr(state.source, "status", {}),
                                        "haus_zaehler": [{**state.haus.zaehler_info(z), "name": f'{state.haus.einheit(zz["einheit"])["name"]}: {zz["name"]}'}
                                                         for z, zz in state.haus.zaehler.items()] if state.haus else []})
@@ -325,6 +329,10 @@ def make_handler(state: State, app_dir: Path):
                     u = self._admin()
                     state.wartung.update_anfordern(u["name"])
                     return self._json({"ok": True, "hinweis": "Update gestartet. Der Dienst startet danach neu."})
+                if url.path == "/api/wartung/alarmtest":
+                    self._admin()
+                    state.alarme.test()
+                    return self._json({"ok": True})
                 if url.path == "/api/wartung/erkennen":
                     self._admin()
                     state.wartung.erkennung_starten()

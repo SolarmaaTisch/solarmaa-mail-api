@@ -151,7 +151,7 @@ class ProfilTests(unittest.TestCase):
                 from solarmaa_dash.abregelung import lade_steuerprofil
                 self.assertIn("limit_register", lade_steuerprofil(p.stem)["steuerung"])
                 continue
-            if p.stem == "smartme_lokal":
+            if p.stem == "smartme_lokal" or tomllib.loads(p.read_text()).get("vorlage"):
                 with self.assertRaises(ValueError):
                     lade_profil(p.stem)
             else:
