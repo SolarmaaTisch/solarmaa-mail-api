@@ -18,6 +18,10 @@ länger als fallback_nach_s (Standard 120 s) keine Daten liefert oder der Dienst
 Bis zum Ablauf der Wartezeit wird die letzte Grenze gehalten. In jedem Fall wird alarmiert
 (Lampe, Push, E-Mail, siehe benachrichtigung.py). Endet der negative Zeitraum, wird normal
 freigegeben – dafür braucht es keinen Zähler.
+
+Neustart: Der Zustand (begrenzt ja/nein) steht in abregelung-zustand.json. Nach jedem Start wird bei
+positivem Preis einmal auf Nennleistung geschrieben, falls die Wechselrichter begrenzt sein könnten;
+fehlgeschlagene Freigaben werden bei jedem Schritt wiederholt und alarmiert.
   - Geschrieben wird nur bei relevanter Änderung oder als Lebenszeichen alle 60 s, um den
     Wechselrichter nicht mit Schreibbefehlen zu überlasten.
   - Vorgaben des Netzbetreibers (Rundsteuerung) haben im Wechselrichter Vorrang; diese
@@ -29,7 +33,9 @@ import logging
 import threading
 import time
 import tomllib
+import json
 from collections import deque
+from pathlib import Path
 
 from .geraete.modbus_profil import PROFIL_DIR
 from .modbus import ModbusError, ModbusTcpClient
@@ -57,7 +63,6 @@ class Wechselrichter:
         self.st = self.prof["steuerung"]
         self.wortfolge = self.prof.get("wortfolge", "gross")
         self.client = ModbusTcpClient(cfg["host"], int(cfg.get("port", 502)), int(cfg.get("unit", 1)))
-        self.freigegeben = False   # externe Begrenzung aktiviert?
         self.letzte_w: float | None = None
         self.letzte_zeit = 0.0
         self.fehler: str | None = None
@@ -73,9 +78,18 @@ class Wechselrichter:
 
     def schreiben(self, w: float) -> None:
         try:
-            if not self.freigegeben and self.st.get("freigabe_register") is not None:
-                self.client.write_registers(int(self.st["freigabe_register"]), [int(self.st["freigabe_wert"])])
-                self.freigegeben = True
+            reg = self.st.get("freigabe_register")
+            if reg is not None:
+                # Vor jedem Schreiben prüfen: Der Wechselrichter kann das Register zurücksetzen
+                # (z. B. nach der Nacht), und eine fremde Steuerung darf nicht überschrieben werden.
+                ist = self.client.read_holding(int(reg), 1)[0]
+                soll = int(self.st["freigabe_wert"])
+                if ist != soll:
+                    erlaubt = [int(x) for x in self.st.get("freigabe_ueberschreibbar", [0])]
+                    if ist not in erlaubt:
+                        raise ModbusError(f"Leistungsbegrenzung steht auf Modus {ist} (andere Steuerung aktiv, "
+                                          "z. B. Zähler/Netzbetreiber) und wird nicht überschrieben")
+                    self.client.write_registers(int(reg), [soll])
             self.client.write_registers(int(self.st["limit_register"]), self._werte(w))
             self.letzte_w, self.letzte_zeit, self.fehler = w, time.time(), None
         except ModbusError as e:
@@ -107,6 +121,7 @@ class Abregelung:
         self.wr = [Wechselrichter(w) for w in a.get("wechselrichter", [])]
         if self.modus != "aus" and not self.wr:
             raise ValueError("[[abregelung.wechselrichter]] fehlt")
+        preise.pruefe_fenster()
         self.nenn_w = sum(w.nenn_w for w in self.wr)
         self.aktiv = False
         self.grenze_w = self.nenn_w
@@ -116,6 +131,12 @@ class Abregelung:
         self.preis_jetzt: float | None = None
         self.protokoll: deque = deque(maxlen=200)
         self.lock = threading.Lock()
+        self.letzter_netz_w: float | None = None
+        pfad = cfg.get("daten", {}).get("pfad", ":memory:")
+        self.zustand_datei = None if pfad == ":memory:" else Path(pfad).parent / "abregelung-zustand.json"
+        # Nach einem Neustart ist unbekannt, welche Grenze im Wechselrichter steht. War er laut
+        # Zustandsdatei begrenzt (oder ist nichts bekannt), wird bei positivem Preis einmal freigegeben.
+        self.unbekannt = self._zustand_lesen()
         if store is not None:
             with store.lock:
                 store.db.execute("CREATE TABLE IF NOT EXISTS abregel_log (ts INTEGER, ereignis TEXT, preis REAL, "
@@ -123,6 +144,25 @@ class Abregelung:
                 store.db.commit()
 
     # -- Hilfen -----------------------------------------------------------
+    def _zustand_lesen(self) -> bool:
+        """True, wenn die Wechselrichter begrenzt sein könnten (Datei fehlt = unbekannt = True)."""
+        if self.zustand_datei is None or not self.zustand_datei.exists():
+            return False   # nie gelaufen: wir haben nichts begrenzt
+        try:
+            return bool(json.loads(self.zustand_datei.read_text()).get("begrenzt", True))
+        except (OSError, ValueError):
+            return True    # Datei beschädigt: sicherheitshalber freigeben
+
+    def _zustand_schreiben(self) -> None:
+        begrenzt = any(w.letzte_w is None or w.letzte_w < w.nenn_w for w in self.wr) if self.modus != "simulation" \
+            else self.unbekannt
+        if self.zustand_datei is not None and begrenzt != getattr(self, "_zustand_alt", None):
+            try:
+                self.zustand_datei.write_text(json.dumps({"begrenzt": begrenzt, "ts": int(time.time())}))
+                self._zustand_alt = begrenzt
+            except OSError:
+                pass
+
     def _log(self, ereignis: str, netz_w: float | None = None):
         eintrag = {"ts": time.time(), "ereignis": ereignis, "preis": self.preis_jetzt,
                    "grenze_w": round(self.grenze_w), "netz_w": None if netz_w is None else round(netz_w)}
@@ -146,80 +186,118 @@ class Abregelung:
             return True, f"Preis {p:.1f} unter Schwelle {self.schwelle:g}"
         return False, ""
 
-    def _verteilen(self, gesamt_w: float, jetzt: float, erzwingen: bool = False) -> None:
+    def _verteilen(self, gesamt_w: float, jetzt: float, erzwingen: bool = False, halten: bool = False,
+                   lebenszeichen: bool = True, echt: bool = False) -> bool:
+        """Verteilt die Gesamtgrenze nach Nennleistung. halten=True schreibt je Wechselrichter den
+        zuletzt bestätigten Wert erneut (und nichts, wenn keiner bekannt ist). Gibt True zurück,
+        wenn alle Wechselrichter den Sollwert bestätigt haben. Fehlgeschlagene Schreibvorgänge
+        werden beim nächsten Schritt automatisch wiederholt, weil letzte_w dann nicht passt."""
+        alle_ok = True
         for w in self.wr:
-            soll = gesamt_w * w.nenn_w / self.nenn_w
-            neu = w.letzte_w is None or abs(soll - w.letzte_w) >= self.min_aenderung_w
-            if not (erzwingen or neu or jetzt - w.letzte_zeit >= 60):
+            if halten:
+                if w.letzte_w is None:
+                    continue
+                soll = w.letzte_w
+            else:
+                soll = gesamt_w * w.nenn_w / self.nenn_w
+            neu = w.letzte_w is None or abs(soll - w.letzte_w) >= self.min_aenderung_w \
+                or (soll in (0.0, w.nenn_w) and soll != w.letzte_w)
+            faellig = lebenszeichen and jetzt - w.letzte_zeit >= 60
+            if not (erzwingen or neu or faellig or w.fehler):
                 continue
-            if self.modus == "simulation":
+            if self.modus == "simulation" and not echt:
                 w.letzte_w, w.letzte_zeit = soll, jetzt
                 continue
             try:
                 w.schreiben(soll)
                 self.alarme.loeschen(f"wr:{w.name}")
             except ModbusError as e:
+                alle_ok = False
                 log.warning("Abregelung %s: %s", w.name, e)
                 self.alarme.setzen(f"wr:{w.name}", f"Wechselrichter {w.name} nimmt keine Leistungsvorgabe an: {e}")
+        self._zustand_schreiben()
+        return alle_ok
 
     # -- Ablauf -----------------------------------------------------------
     def tick(self, snap, jetzt: float | None = None) -> None:
-        if self.modus == "aus":
-            return
         jetzt = jetzt or time.time()
         with self.lock:
-            if snap is not None and snap.grid_w is not None and jetzt - snap.ts < 30:
-                self.letzte_messung = jetzt
             if jetzt - self.letzter_schritt < self.schritt_s:
                 return
             self.letzter_schritt = jetzt
+            if self.modus == "aus":
+                self._sicher_freigeben(jetzt)
+                return
             soll, grund = self._soll_abregeln(jetzt)
             self._preise_pruefen(jetzt)
-            messung_ok = snap is not None and snap.grid_w is not None and jetzt - snap.ts < 30
+            alter = getattr(snap, "grid_alter_s", 0.0) if snap is not None else None
+            messung_da = snap is not None and snap.grid_w is not None and jetzt - snap.ts < 30 and alter < 90
+            messung_frisch = messung_da and alter < self.schritt_s
+            if messung_da:
+                self.letzte_messung = jetzt
 
-            if soll and not messung_ok:
+            if not soll:
+                if self.aktiv:
+                    self._log("Ende: Preis wieder positiv" if self.modus != "test" else "Ende Testfenster")
+                self.aktiv, self.fallback_aktiv, self.grund, self.grenze_w = False, None, "", self.nenn_w
+                self.alarme.loeschen("zaehler")
+                self._sicher_freigeben(jetzt)
+                return
+
+            if not messung_da:
                 ausfall = jetzt - self.letzte_messung if self.letzte_messung else self.fallback_nach_s + 1
                 self.alarme.setzen("zaehler", "Netzzähler liefert keine Daten während negativer Strompreise. "
                                    f"Ausfallverhalten: {self.fallback}.")
                 if not self.aktiv:
-                    # Kein Startwert ohne Messung: direkt Ausfallverhalten anwenden
-                    self.aktiv, self.grund = True, grund
-                    self._log(f"Start ohne Zählerdaten: {grund}")
-                if ausfall < self.fallback_nach_s:
-                    self._verteilen(self.grenze_w, jetzt)          # letzte Grenze halten
-                elif self.fallback_aktiv != self.fallback:
-                    self.fallback_aktiv = self.fallback
-                    self._fallback_anwenden(jetzt)
-                else:
-                    self._verteilen(self.grenze_w, jetzt)          # Lebenszeichen
-                self.grund = f"Netzzähler fehlt – Ausfallverhalten «{self.fallback}»"
-                return
-            if messung_ok:
-                if self.fallback_aktiv:
-                    self._log("Netzzähler wieder da, Regelung läuft weiter", snap.grid_w)
-                    self.fallback_aktiv = None
-                self.alarme.loeschen("zaehler")
-            if soll:
-                netz = snap.grid_w
-                if not self.aktiv:
                     self.aktiv = True
-                    self.grenze_w = min(self.nenn_w, snap.pv_w or self.nenn_w)
-                    self.grund = grund
-                    self._log(f"Start: {grund}", netz)
-                self.grund = grund
-                self.grenze_w = max(0.0, min(self.nenn_w, self.grenze_w + self.k * (netz - self.puffer_w)))
-                self._verteilen(self.grenze_w, jetzt)
-            elif self.aktiv:
-                self.alarme.loeschen("zaehler")
-                self._freigeben(jetzt, "Ende: Preis wieder positiv" if self.modus != "test" else "Ende Testfenster")
+                    self._log(f"Start ohne Zählerdaten: {grund}")
+                self.grund = f"Netzzähler fehlt – Ausfallverhalten «{self.fallback}»"
+                if ausfall < self.fallback_nach_s or self.fallback == "halten":
+                    if ausfall >= self.fallback_nach_s and self.fallback_aktiv != "halten":
+                        self.fallback_aktiv = "halten"
+                        self._log("Ausfallverhalten «halten» angewendet")
+                    self._verteilen(self.grenze_w, jetzt, halten=True)     # letzte bestätigte Grenze halten
+                else:
+                    if self.fallback_aktiv != self.fallback:
+                        self.fallback_aktiv = self.fallback
+                        self.grenze_w = self.nenn_w if self.fallback == "einspeisung" else 0.0
+                        self._log(f"Ausfallverhalten «{self.fallback}» angewendet")
+                    self._verteilen(self.grenze_w, jetzt)
+                return
 
-    def _fallback_anwenden(self, jetzt: float) -> None:
-        if self.fallback == "einspeisung":
-            self.grenze_w = self.nenn_w
-        elif self.fallback == "aus":
-            self.grenze_w = 0.0
-        self._verteilen(self.grenze_w, jetzt, erzwingen=True)
-        self._log(f"Ausfallverhalten «{self.fallback}» angewendet")
+            if self.fallback_aktiv:
+                self._log("Netzzähler wieder da, Regelung läuft weiter", snap.grid_w)
+                self.fallback_aktiv = None
+            self.alarme.loeschen("zaehler")
+            pv = snap.pv_w if getattr(snap, "pv_gemessen", True) else None
+            if not self.aktiv:
+                self.aktiv = True
+                self.grenze_w = min(self.nenn_w, pv) if pv else self.nenn_w
+                self._log(f"Start: {grund}", snap.grid_w)
+            self.grund = grund
+            if messung_frisch:   # jeden Messwert nur einmal einrechnen (wichtig bei Cloud-Zählern)
+                self.grenze_w += self.k * (snap.grid_w - self.puffer_w)
+                if pv is not None:
+                    # Nicht über die tatsächliche Produktion hinaus aufziehen, sonst dauert es
+                    # Minuten, bis die Grenze bei plötzlicher Einspeisung wieder greift.
+                    self.grenze_w = min(self.grenze_w, pv + max(0.05 * self.nenn_w, 2 * self.puffer_w))
+                self.grenze_w = max(0.0, min(self.nenn_w, self.grenze_w))
+            self._verteilen(self.grenze_w, jetzt)
+
+    def _sicher_freigeben(self, jetzt: float) -> None:
+        """Ausserhalb negativer Preise: sicherstellen, dass jeder Wechselrichter auf Nennleistung steht.
+        Schreibt nach dem Start einmal (falls er begrenzt sein könnte) und wiederholt bei Fehlern."""
+        offen = [w for w in self.wr if w.letzte_w != w.nenn_w]
+        if not offen:
+            return
+        if not self.unbekannt and all(w.letzte_w is None for w in offen):
+            return   # laut Zustandsdatei nie begrenzt: nichts schreiben
+        ok = self._verteilen(self.nenn_w, jetzt, lebenszeichen=False, echt=self.unbekannt)
+        if ok and all(w.letzte_w == w.nenn_w for w in self.wr):
+            if self.unbekannt:
+                self._log("Wechselrichter auf Nennleistung freigegeben")
+            self.unbekannt = False
+            self._zustand_schreiben()
 
     def _preise_pruefen(self, jetzt: float) -> None:
         if self.modus == "test" or self.preise.quelle == "keine":
@@ -232,28 +310,20 @@ class Abregelung:
         else:
             self.alarme.loeschen("preise")
 
-    def _freigeben(self, jetzt: float, grund: str) -> None:
-        self.aktiv = False
-        self.fallback_aktiv = None
-        self.grenze_w = self.nenn_w
-        self.grund = ""
-        self._verteilen(self.nenn_w, jetzt, erzwingen=True)
-        self._log(grund)
-
     def freigeben_alle(self) -> None:
         """Beim Beenden: ausserhalb negativer Preise freigeben, sonst das gewählte Ausfallverhalten."""
-        if self.modus in ("aus", "simulation"):
-            return
+        if self.modus in ("aus", "simulation") or not self.aktiv:
+            return   # ausserhalb der Abregelung stehen die Wechselrichter bereits auf Nennleistung
         with self.lock:
-            if self.aktiv and self.fallback == "halten":
+            if self.fallback == "halten":
                 log.warning("Dienst beendet während Abregelung: letzte Grenze bleibt (Ausfallverhalten «halten»)")
                 return
-            ziel = 0.0 if (self.aktiv and self.fallback == "aus") else None
             for w in self.wr:
                 try:
-                    w.schreiben(w.nenn_w if ziel is None else ziel)
+                    w.schreiben(0.0 if self.fallback == "aus" else w.nenn_w)
                 except ModbusError as e:
                     log.error("Vorgabe %s beim Beenden fehlgeschlagen: %s", w.name, e)
+            self._zustand_schreiben()
 
     def status(self) -> dict:
         jetzt = time.time()

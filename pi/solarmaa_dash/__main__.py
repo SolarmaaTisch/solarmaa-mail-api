@@ -76,8 +76,11 @@ def lebenszeichen_loop(state: State, url: str, stop: threading.Event) -> None:
 
 def preis_loop(preise, stop: threading.Event) -> None:
     while not stop.is_set():
-        if preise.braucht_update():
-            preise.aktualisieren()
+        try:
+            if preise.braucht_update():
+                preise.aktualisieren()
+        except Exception:  # noqa: BLE001 – Thread muss weiterlaufen
+            log.exception("Fehler beim Preisabruf")
         stop.wait(300)
 
 
@@ -107,7 +110,11 @@ def poll_loop(state: State, source, stop: threading.Event) -> None:
             state.store.add(snap)
             state.publish(snap)
             if state.abregelung:
-                state.abregelung.tick(snap)
+                try:
+                    state.abregelung.tick(snap)
+                except Exception:  # noqa: BLE001 – Messung und Anzeige laufen weiter
+                    log.exception("Fehler in der Abregelung")
+                    state.alarme.setzen("abregelung", "Interner Fehler in der Abregelung (siehe Protokoll)")
             anlage_fehler_seit = None
             state.alarme.loeschen("anlage")
             geraete_alarme(state, source, fehler_seit, t0)
@@ -118,7 +125,10 @@ def poll_loop(state: State, source, stop: threading.Event) -> None:
                 log.warning("Messwert konnte nicht gelesen werden: %s", msg)
             state.publish(None, msg)
             if state.abregelung:
-                state.abregelung.tick(None)
+                try:
+                    state.abregelung.tick(None)
+                except Exception:  # noqa: BLE001
+                    log.exception("Fehler in der Abregelung")
             anlage_fehler_seit = anlage_fehler_seit or t0
             if t0 - anlage_fehler_seit > 600:
                 state.alarme.setzen("anlage", f"Anlage liefert seit {int((t0 - anlage_fehler_seit) / 60)} Minuten "
@@ -152,7 +162,9 @@ def cmd_run(args) -> int:
     b = cfg.get("benachrichtigung") or {}
     eingerichtet = any((b.get(k) or {}).get(f) for k, f in (("lampe", "host"), ("push", "thema"), ("email", "smtp_host")))
     state.alarme = Alarme(cfg) if eingerichtet else KeineAlarme()
-    if cfg["abregelung"].get("modus", "aus") != "aus":
+    # Auch im Modus «aus» anlegen, sobald Wechselrichter eingetragen sind: So werden sie nach
+    # einem Wechsel von auto/test auf aus sicher wieder freigegeben.
+    if cfg["abregelung"].get("modus", "aus") != "aus" or cfg["abregelung"].get("wechselrichter"):
         from .abregelung import Abregelung
         from .preise import Preise
         daten_dir = None if cfg["daten"]["pfad"] == ":memory:" else Path(cfg["daten"]["pfad"]).parent
@@ -166,7 +178,8 @@ def cmd_run(args) -> int:
             for name, rolle, ein in (("solarmaa", "admin", None), ("verwaltung", "verwaltung", None),
                                      ("mieter", "mieter", haus.einheiten[1]["id"])):
                 auth.anlegen(name, "demo-passwort", rolle, ein, anzeigename=f"Demo {rolle}")
-            log.info("Demo-Benutzer angelegt: solarmaa / verwaltung / mieter, Passwort demo-passwort")
+            log.warning("DEMO: Benutzer solarmaa / verwaltung / mieter mit bekanntem Passwort «demo-passwort» "
+                        "angelegt. [haus] demo = true nie auf einer Kundenanlage verwenden.")
     app_dir = find_app_dir(cfg)
     host, port = cfg["server"]["host"], int(args.port or cfg["server"]["port"])
     httpd = serve(state, app_dir, host, port)

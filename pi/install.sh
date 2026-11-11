@@ -45,12 +45,13 @@ echo "==> Benutzer und Verzeichnisse"
 id -u "$USER_NAME" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$USER_NAME"
 install -d -m 755 "$TARGET" "$CONF_DIR"
 install -d -m 750 -o "$USER_NAME" -g "$USER_NAME" /var/lib/solarmaa-dash
+install -d -m 755 -o root -g root /var/log/solarmaa-dash
 
 if [[ "$REPO_DIR" != "$TARGET/src" ]]; then
   echo "==> Quellcode nach $TARGET/src (für Web-Updates)"
   if [[ -d "$REPO_DIR/.git" ]]; then
     rm -rf "$TARGET/src.new"
-    git clone --quiet "$REPO_DIR" "$TARGET/src.new"
+    git -c safe.directory='*' clone --quiet "$REPO_DIR" "$TARGET/src.new"
     ORIGIN=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)
     [[ -n "$ORIGIN" ]] && git -C "$TARGET/src.new" remote set-url origin "$ORIGIN"
     BR=$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)

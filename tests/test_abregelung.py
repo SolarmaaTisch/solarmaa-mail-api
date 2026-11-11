@@ -47,6 +47,30 @@ class PreisTests(unittest.TestCase):
         self.assertEqual(d[t0 + 1800][1], -3.0)   # Position 3 fehlt → Vorwert
         self.assertEqual(d[t0 + 2700][1], 5.0)
 
+    def test_gemischte_aufloesung_fein_gewinnt(self):
+        doc = XML.replace("</Publication_MarketDocument>", """<TimeSeries><Period>
+  <timeInterval><start>2026-06-21T10:00Z</start><end>2026-06-21T11:00Z</end></timeInterval>
+  <resolution>PT60M</resolution>
+  <Point><position>1</position><price.amount>99</price.amount></Point>
+ </Period></TimeSeries></Publication_MarketDocument>""")
+        t0 = int(dt.datetime(2026, 6, 21, 10, 0, tzinfo=dt.timezone.utc).timestamp())
+        for text in (doc, doc.replace("PT60M", "PTX").replace("PT15M", "PT60M").replace("PTX", "PT15M")):
+            p = Preise({"preisquelle": "keine"}, None)
+            for s_, (e_, pr) in sorted(parse_entsoe(doc).items()):
+                from solarmaa_dash.preise import einfuegen
+                einfuegen(p.daten, s_, e_, pr)
+            self.assertEqual(p.preis(t0 + 1000), -3.0)
+            self.assertEqual(p.preis(t0 + 10), 12.5)
+        del text
+
+    def test_fenster_mitternacht_und_pruefung(self):
+        p = Preise({"preisquelle": "keine", "test_fenster": ["22:00-02:00"]}, None)
+        self.assertTrue(p.im_testfenster(dt.datetime(2026, 6, 21, 23, 0).timestamp()))
+        self.assertTrue(p.im_testfenster(dt.datetime(2026, 6, 22, 1, 0).timestamp()))
+        self.assertFalse(p.im_testfenster(dt.datetime(2026, 6, 22, 3, 0).timestamp()))
+        with self.assertRaises(ValueError):
+            Preise({"preisquelle": "keine", "test_fenster": ["10-11"]}, None).pruefe_fenster()
+
     def test_csv_und_testfenster(self):
         d = parse_csv("Zeit;Preis\n2026-06-21 12:00;-4.2\n2026-06-21 12:15;1.0\n")
         t = int(dt.datetime(2026, 6, 21, 12, 0).timestamp())
@@ -60,10 +84,10 @@ class PreisTests(unittest.TestCase):
 
 class AbregelTests(unittest.TestCase):
     def setUp(self):
-        self.srv = FakeModbus({1: {}})
+        self.srv = FakeModbus({i: {12467: 0} for i in range(1, 5)})
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         port = self.srv.server_address[1]
-        wr = [{"name": f"WR{i}", "host": "127.0.0.1", "port": port, "unit": 1, "nennleistung_w": 60000}
+        wr = [{"name": f"WR{i}", "host": "127.0.0.1", "port": port, "unit": i, "nennleistung_w": 60000}
               for i in range(1, 5)]
         self.cfg = config._merge(config.DEFAULTS, {"abregelung": {
             "modus": "auto", "preisquelle": "keine", "puffer_w": 500, "verstaerkung": 0.6,
@@ -148,6 +172,95 @@ class AbregelTests(unittest.TestCase):
         a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
         self.assertIn("wr:WR1", alarme.offen)
         self.assertNotIn("wr:WR2", alarme.offen)
+
+    def test_neustart_gibt_frei(self):
+        """Kritisch: nach Absturz während Abregelung muss bei positivem Preis freigegeben werden."""
+        import json, tempfile
+        d = tempfile.mkdtemp()
+        self.cfg["daten"] = {**self.cfg["daten"], "pfad": d + "/data.db"}
+        t = time.time()
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, -5.0)}
+        a = Abregelung(self.cfg, self.preise)
+        a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
+        self.assertTrue(json.load(open(d + "/abregelung-zustand.json"))["begrenzt"])
+        # «Absturz»: neues Objekt, Preis inzwischen positiv
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, 25.0)}
+        n = len(self.srv.writes)
+        b = Abregelung(self.cfg, self.preise)
+        b.tick(Snapshot(t + 20, 30000, 0, 30000), jetzt=t + 20)
+        self.assertEqual([v for _, v in self.limits()[-4:]], [60000] * 4)
+        self.assertFalse(json.load(open(d + "/abregelung-zustand.json"))["begrenzt"])
+        n2 = len(self.srv.writes)
+        self.assertGreater(n2, n)
+        b.tick(Snapshot(t + 40, 30000, 0, 30000), jetzt=t + 40)      # danach keine weiteren Schreibbefehle
+        self.assertEqual(len(self.srv.writes), n2)
+        # Modus «aus» nach einer Begrenzung: ebenfalls freigeben
+        json.dump({"begrenzt": True}, open(d + "/abregelung-zustand.json", "w"))
+        self.cfg["abregelung"]["modus"] = "aus"
+        c = Abregelung(self.cfg, self.preise)
+        c.tick(None, jetzt=t + 60)
+        self.assertGreater(len(self.srv.writes), n2)
+
+    def test_erster_start_schreibt_nichts(self):
+        t = time.time()
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, 25.0)}
+        a = Abregelung(self.cfg, self.preise)
+        a.tick(Snapshot(t, 30000, 0, 30000), jetzt=t)
+        self.assertEqual(self.srv.writes, [])
+
+    def test_fehlgeschlagene_freigabe_wird_wiederholt(self):
+        t = time.time()
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, -5.0)}
+        alarme = FakeAlarme()
+        a = Abregelung(self.cfg, self.preise, alarme=alarme)
+        a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, 25.0)}
+        self.srv.write_fail = True
+        a.tick(Snapshot(t + 10, 30000, 0, 30000), jetzt=t + 10)
+        self.assertIn("wr:WR1", alarme.offen)
+        self.srv.write_fail = False
+        a.tick(Snapshot(t + 20, 30000, 0, 30000), jetzt=t + 20)       # nächster Schritt versucht es erneut
+        self.assertEqual([v for _, v in self.limits()[-4:]], [60000] * 4)
+        self.assertNotIn("wr:WR1", alarme.offen)
+
+    def test_fremde_steuerung_wird_nicht_ueberschrieben(self):
+        for u in self.srv.units.values():
+            u[12467] = 3                                  # «Digital Power Meter» aktiv
+        t = time.time()
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, -5.0)}
+        alarme = FakeAlarme()
+        a = Abregelung(self.cfg, self.preise, alarme=alarme)
+        a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
+        self.assertEqual(self.srv.writes, [])
+        self.assertIn("andere Steuerung", alarme.offen["wr:WR1"])
+
+    def test_kein_aufziehen_ueber_produktion(self):
+        t = time.time()
+        self.preise.daten = {int(t) - 60: (int(t) + 7200, -5.0)}
+        a = Abregelung(self.cfg, self.preise)
+        for i in range(60):                                           # 10 min Netzbezug bei 50 kW PV
+            a.tick(Snapshot(t + i * 10, 50000, 20000, 70000), jetzt=t + i * 10)
+        self.assertLessEqual(a.grenze_w, 50000 + 12000)
+        schritte = 0
+        pv = 50000.0
+        while schritte < 20:                                          # Last fällt weg: 10 kW Einspeisung
+            pv = min(50000.0, a.grenze_w)
+            netz = 40000 - pv
+            if netz >= 0:
+                break
+            a.tick(Snapshot(t + 600 + schritte * 10, pv, netz, 40000), jetzt=t + 600 + schritte * 10)
+            schritte += 1
+        self.assertLess(schritte, 8)                                  # früher: rund 30 Schritte
+
+    def test_alter_cloud_messwert_wird_nur_einmal_gerechnet(self):
+        t = time.time()
+        self.preise.daten = {int(t) - 60: (int(t) + 3600, -5.0)}
+        a = Abregelung(self.cfg, self.preise)
+        a.tick(Snapshot(t, 100000, -70000, 30000), jetzt=t)
+        g = a.grenze_w
+        a.tick(Snapshot(t + 10, 100000, -70000, 30000, grid_alter_s=10.0), jetzt=t + 10)
+        a.tick(Snapshot(t + 20, 100000, -70000, 30000, grid_alter_s=20.0), jetzt=t + 20)
+        self.assertEqual(a.grenze_w, g)
 
     def test_simulation_schreibt_nichts(self):
         t = time.time()

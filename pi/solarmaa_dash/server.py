@@ -38,6 +38,7 @@ log = logging.getLogger("solarmaa_dash")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("font/woff2", ".woff2")
 MAX_BODY = 2 * 1024 * 1024
+MAX_STREAMS = 40
 
 
 class State:
@@ -184,9 +185,11 @@ class HttpFehler(Exception):
 
 def make_handler(state: State, app_dir: Path):
     app_root = app_dir.resolve()
+    stream_lock, stream_zahl = threading.Lock(), [0]
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "SolarmaaDash/1.1"
+        server_version = "SolarmaaDash/1.4"
+        timeout = 30   # hängende Verbindungen nach 30 s schliessen
 
         def log_message(self, fmt, *args):  # leiser als Standard
             log.debug("%s - %s", self.address_string(), fmt % args)
@@ -226,12 +229,23 @@ def make_handler(state: State, app_dir: Path):
                 raise HttpFehler(403, "Nur für Solarmaa (Rolle admin)")
             return u
 
+        def _json_body(self) -> dict:
+            d = json.loads(self._body() or b"{}")
+            if not isinstance(d, dict):
+                raise HttpFehler(400, "Ungültige Anfrage")
+            return d
+
         def _need_haus(self):
             if state.haus is None:
                 raise HttpFehler(404, "Für diese Anlage ist keine Hausansicht eingerichtet")
 
         def _body(self) -> bytes:
-            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise HttpFehler(400, "Ungültige Anfrage") from None
+            if n < 0:
+                raise HttpFehler(400, "Ungültige Anfrage")
             if n > MAX_BODY:
                 raise HttpFehler(413, "Datei zu gross (max. 2 MB)")
             return self.rfile.read(n) if n else b""
@@ -313,7 +327,7 @@ def make_handler(state: State, app_dir: Path):
                 if state.auth is None:
                     raise HttpFehler(404, "Anmeldung ist nicht eingerichtet")
                 if url.path == "/api/login":
-                    d = json.loads(self._body() or b"{}")
+                    d = self._json_body()
                     ip = self.client_address[0]
                     if state.auth.gesperrt(ip):
                         raise HttpFehler(429, "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.")
@@ -327,6 +341,8 @@ def make_handler(state: State, app_dir: Path):
                     return self._json({"ok": True}, cookie=f"{COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
                 if url.path == "/api/wartung/update":
                     u = self._admin()
+                    if state.abregelung and state.abregelung.aktiv:
+                        raise HttpFehler(409, "Gerade wird abgeregelt. Update bitte nach dem negativen Preisfenster starten.")
                     state.wartung.update_anfordern(u["name"])
                     return self._json({"ok": True, "hinweis": "Update gestartet. Der Dienst startet danach neu."})
                 if url.path == "/api/wartung/alarmtest":
@@ -346,7 +362,7 @@ def make_handler(state: State, app_dir: Path):
                     text = self._body().decode("utf-8-sig", errors="replace")
                     return self._json(state.rechnungen.importieren(text, von=u["name"]))
                 if url.path == "/api/rechnungen/status":
-                    d = json.loads(self._body() or b"{}")
+                    d = self._json_body()
                     if not state.rechnungen.status_setzen(str(d.get("nr", "")), str(d.get("status", "")), u["name"]):
                         raise HttpFehler(404, "Rechnung nicht gefunden")
                     return self._json({"ok": True})
@@ -355,10 +371,21 @@ def make_handler(state: State, app_dir: Path):
                 return self._json({"fehler": str(e)}, e.status)
             except (ValueError, json.JSONDecodeError) as exc:
                 return self._json({"fehler": str(exc)}, 400)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
                 return None
 
         def _stream(self) -> None:
+            with stream_lock:
+                if stream_zahl[0] >= MAX_STREAMS:
+                    return self._json({"fehler": "Zu viele gleichzeitige Verbindungen"}, 503)
+                stream_zahl[0] += 1
+            try:
+                self._stream_lauf()
+            finally:
+                with stream_lock:
+                    stream_zahl[0] -= 1
+
+        def _stream_lauf(self) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")

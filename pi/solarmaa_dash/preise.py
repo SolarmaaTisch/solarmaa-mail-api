@@ -34,6 +34,18 @@ def _utc(ts: float) -> str:
     return time.strftime("%Y%m%d%H%M", time.gmtime(ts))
 
 
+def einfuegen(ziel: dict, start: int, ende: int, preis: float) -> None:
+    """Fügt ein Intervall ein. Bei Überlappung gewinnt die feinere Auflösung (15 min vor 60 min)."""
+    dauer = ende - start
+    for k in [k for k, (e, _) in ziel.items() if k < ende and e > start and k != start]:
+        if ziel[k][0] - k <= dauer:
+            return               # feineres (oder gleich feines) Intervall vorhanden: gröberes verwerfen
+        del ziel[k]
+    if start in ziel and ziel[start][0] - start < dauer:
+        return
+    ziel[start] = (ende, preis)
+
+
 def parse_entsoe(xml_text: str) -> dict[int, tuple[int, float]]:
     """A44-Antwort → {start_ts: (ende_ts, preis)}. Fehlende Punkte (A03-Kurve) werden aufgefüllt."""
     root = ET.fromstring(xml_text)
@@ -60,7 +72,7 @@ def parse_entsoe(xml_text: str) -> dict[int, tuple[int, float]]:
                 letzter = punkte[pos]
             if letzter is not None:
                 a = t0 + i * schritt
-                out[a] = (a + schritt, letzter)
+                einfuegen(out, a, a + schritt, letzter)
     return out
 
 
@@ -137,10 +149,13 @@ class Preise:
             else:
                 neu = {}
             with self.lock:
-                self.daten.update(neu)
+                for start, (ende, p) in sorted(neu.items()):
+                    einfuegen(self.daten, start, ende, p)
+                    if self.daten.get(start, (0, None))[0] == ende:
+                        self.daten[start] = (ende, p)      # gleiche Auflösung: neuer Wert ersetzt alten
                 self.stand, self.fehler = jetzt, None
             self._sichern()
-        except (urllib.error.URLError, OSError, ValueError, ET.ParseError, AttributeError) as e:
+        except Exception as e:  # noqa: BLE001 – der Preis-Thread darf nie sterben
             self.fehler = f"Preise nicht abrufbar: {getattr(e, 'reason', e)}"
             log.warning(self.fehler)
 
@@ -155,31 +170,53 @@ class Preise:
         return nach_13 and self.preis(morgen, test=False) is None and jetzt - self.stand > 1800
 
     # -- Abfrage ----------------------------------------------------------
+    @staticmethod
+    def _fenster(f: str) -> tuple[str | None, int, int]:
+        f = f.strip()
+        tag = None
+        if len(f) > 11 and f[4] == "-" and f[7] == "-":
+            tag, f = f[:10], f[11:].strip()
+            dt.date.fromisoformat(tag)
+        a, b = f.split("-")
+        ah, am = map(int, a.split(":"))
+        bh, bm = map(int, b.split(":"))
+        if not (0 <= ah < 24 and 0 <= bh <= 24 and 0 <= am < 60 and 0 <= bm < 60):
+            raise ValueError("Uhrzeit ausserhalb 00:00–24:00")
+        return tag, ah * 60 + am, bh * 60 + bm
+
+    def pruefe_fenster(self) -> None:
+        """Beim Start: fehlerhafte Testfenster sofort melden statt still ignorieren."""
+        for f in self.test_fenster:
+            try:
+                self._fenster(f)
+            except (ValueError, IndexError) as e:
+                raise ValueError(f"abregelung.test_fenster «{f}» ungültig ({e}). "
+                                 "Format: \"HH:MM-HH:MM\" oder \"JJJJ-MM-TT HH:MM-HH:MM\"") from e
+
     def im_testfenster(self, ts: float) -> bool:
         t = dt.datetime.fromtimestamp(ts)
+        m = t.hour * 60 + t.minute
         for f in self.test_fenster:
-            f = f.strip()
-            tag = None
-            if len(f) > 11 and f[4] == "-":
-                tag, f = f[:10], f[11:].strip()
-            if tag and tag != t.date().isoformat():
+            try:
+                tag, a, b = self._fenster(f)
+            except (ValueError, IndexError):
                 continue
-            a, b = f.split("-")
-            ah, am = map(int, a.split(":"))
-            bh, bm = map(int, b.split(":"))
-            m = t.hour * 60 + t.minute
-            if ah * 60 + am <= m < bh * 60 + bm:
-                return True
+            if b > a:
+                if (tag is None or tag == t.date().isoformat()) and a <= m < b:
+                    return True
+            else:  # über Mitternacht, z. B. 22:00-02:00
+                gestern = (t.date() - dt.timedelta(days=1)).isoformat()
+                if (m >= a and (tag is None or tag == t.date().isoformat())) or \
+                        (m < b and (tag is None or tag == gestern)):
+                    return True
         return False
 
     def preis(self, ts: float, test: bool = True) -> float | None:
         if test and self.im_testfenster(ts):
             return TEST_PREIS
         with self.lock:
-            for start, (ende, p) in self.daten.items():
-                if start <= ts < ende:
-                    return p
-        return None
+            treffer = [(ende - start, p) for start, (ende, p) in self.daten.items() if start <= ts < ende]
+        return min(treffer)[1] if treffer else None   # feinstes Intervall gewinnt
 
     def zeitreihe(self, von: float, bis: float) -> list[dict]:
         with self.lock:

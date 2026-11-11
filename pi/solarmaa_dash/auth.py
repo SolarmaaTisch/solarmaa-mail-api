@@ -37,6 +37,9 @@ def check_pw(pw: str, stored: str) -> bool:
         return False
 
 
+_DUMMY_HASH = hash_pw(secrets.token_hex(16))
+
+
 class Auth:
     def __init__(self, store):
         self.store = store
@@ -95,7 +98,7 @@ class Auth:
             return None
         with self.store.lock:
             r = self.store.db.execute("SELECT pw_hash FROM benutzer WHERE name = ?", (name,)).fetchone()
-        ok = check_pw(pw, r[0]) if r else check_pw(pw, hash_pw("x", b"0" * 16))  # gleiche Laufzeit
+        ok = check_pw(pw, r[0] if r else _DUMMY_HASH)  # ein Hash in beiden Fällen: gleiche Laufzeit
         if not (r and ok):
             with self.flock:
                 self.fails.setdefault(ip, []).append(time.time())

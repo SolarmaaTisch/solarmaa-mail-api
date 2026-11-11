@@ -120,7 +120,7 @@ class Store:
         cutoff = time.time() - self.retention_days * 86400
         with self.lock:
             self.db.execute("DELETE FROM minutes WHERE ts < ?", (int(cutoff),))
-            self.db.execute("DELETE FROM days WHERE day < ?", (day_key(cutoff),))
+            # Tagessummen bleiben für immer (klein), sonst würden Gesamtwerte nach der Frist schrumpfen
             self.db.commit()
 
     # -- Lesen ------------------------------------------------------------

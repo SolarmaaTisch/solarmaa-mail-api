@@ -28,7 +28,7 @@ flowchart LR
 | `einspeisung` | alle Wechselrichter auf Nennleistung | Produktion wichtiger als die Kosten der negativen Viertelstunden |
 | `aus` | alle Wechselrichter auf 0 W, auch kein Eigenverbrauch aus PV | negative Preise sehr teuer, Eigenverbrauch klein |
 
-Dasselbe gilt, wenn der Dienst während negativer Preise beendet wird (Update, Neustart). Wird der Preis wieder positiv, gibt der Pi frei, dafür braucht er keinen Zähler. Was der **Wechselrichter** macht, wenn der Pi ganz ausfällt und keine Vorgaben mehr kommen, bestimmt seine eigene Einstellung (siehe unten, mit Kostal klären).
+Dasselbe gilt, wenn der Dienst während negativer Preise beendet wird (Neustart). Nach jedem Start prüft der Pi, ob die Wechselrichter noch begrenzt sein könnten, und gibt bei positivem Preis frei. Fehlgeschlagene Freigaben wiederholt er alle 10 Sekunden und alarmiert. Wird der Preis wieder positiv, gibt der Pi frei, dafür braucht er keinen Zähler. Was der **Wechselrichter** macht, wenn der Pi ganz ausfällt und keine Vorgaben mehr kommen, bestimmt seine eigene Einstellung (siehe unten, mit Kostal klären).
 
 **Benachrichtigung:** Jeder Ausfall wird gemeldet:
 - **rote Lampe** über einen Shelly (Gen1 bis Gen4) oder myStrom-Stecker, leuchtet bei kritischen Alarmen
@@ -91,6 +91,8 @@ Ein Speicher hilft bei negativen Preisen: Er lädt den Überschuss, statt ihn ab
 1. **PIKO-CI-Register prüfen.** Die Register stammen aus Auszügen der Kostal-Schnittstellenbeschreibung «PIKO CI Interface description KOSTAL MODBUS (TCP) with control information»:
    - `0x30B3` (12467) «Power limit function» = 1 «External device»
    - `0x3085` (12421) «Output power de-rating by Modbus command», Watt, U32
+
+   Der Pi liest 0x30B3 vor jedem Schreiben. Steht dort etwas anderes als 0 oder 1 (z. B. 3 «Digital Power Meter»), schreibt er nicht und alarmiert: Dann ist bereits eine andere Begrenzung aktiv, die er nicht überschreiben darf.
 
    Das vollständige PDF konnte ich nicht lesen. Vor dem ersten Schreiben mit dem aktuellen Kostal-PDF für die installierte Firmware vergleichen (`pi/solarmaa_dash/profile/kostal_piko_ci.toml`). Klären:
    - Bedeutet «External device» wirklich Steuerung über Modbus?

@@ -16,7 +16,7 @@ Für Anlagen ohne Hausansicht reicht dafür `[haus] aktiv = false`: Die Wartung 
 1. `install.sh` legt eine Kopie des Git-Repositories unter `/opt/solarmaa-dash/src` an und merkt sich den Branch in `/etc/solarmaa-dash/update-branch`.
 2. Ein Klick auf «Update installieren» legt die Datei `/var/lib/solarmaa-dash/update-anfrage` an. Der Webdienst selbst hat keine Root-Rechte.
 3. systemd bemerkt die Datei (`solarmaa-dash-update.path`) und startet `/usr/local/sbin/solarmaa-update` als root.
-4. Das Skript holt den neuesten Stand, **führt die Tests aus** und installiert nur, wenn sie bestehen. Sonst bleibt die alte Version aktiv. Alles steht im Update-Protokoll.
+4. Das Skript holt den neuesten Stand, **führt die Tests aus** und installiert nur, wenn sie bestehen. Sonst bleibt die alte Version aktiv. Alles steht im Update-Protokoll (`/var/log/solarmaa-dash/update.log`). Während einer Abregelung wird kein Update gestartet. Schlägt die Installation fehl, wird die alte Version wiederhergestellt.
 
 Manuell per SSH: `sudo solarmaa-update`
 

@@ -12,6 +12,7 @@ import csv
 import datetime as dt
 import io
 import re
+import sqlite3
 import time
 
 SPALTEN = {
@@ -105,29 +106,33 @@ class Rechnungen:
         unbekannt: list[str] = []
         jetzt = int(time.time())
         with self.store.lock:
-            for row in reader:
-                g = {f: (row.get(c) or "").strip() for f, c in zuordnung.items()}
-                if not g["nr"]:
-                    continue
-                eid = self._einheit_id(g["einheit"])
-                if eid is None:
-                    unbekannt.append(f'{g["nr"]} ({g["einheit"]})')
-                    continue
-                alt = self.store.db.execute("SELECT status FROM rechnungen WHERE nr = ?", (g["nr"],)).fetchone()
-                status = _status(g.get("status", "")) if "status" in zuordnung else (alt[0] if alt else "offen")
-                if alt and alt[0] == "bezahlt" and "status" not in zuordnung:
-                    status = "bezahlt"
-                self.store.db.execute(
-                    "INSERT INTO rechnungen VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(nr) DO UPDATE SET "
-                    "einheit=excluded.einheit, empfaenger=excluded.empfaenger, von=excluded.von, bis=excluded.bis, "
-                    "betrag=excluded.betrag, status=excluded.status, faellig=excluded.faellig, pdf=excluded.pdf, "
-                    "geaendert=excluded.geaendert, geaendert_von=excluded.geaendert_von",
-                    (g["nr"], eid, g.get("empfaenger", ""), _datum(g.get("von", "")), _datum(g.get("bis", "")),
-                     _betrag(g["betrag"]), status, _datum(g.get("faellig", "")), g.get("pdf", ""), jetzt, von))
-                if alt:
-                    aktualisiert += 1
-                else:
-                    neu += 1
+            try:
+                for row in reader:
+                    g = {f: (row.get(c) or "").strip() for f, c in zuordnung.items()}
+                    if not g["nr"]:
+                        continue
+                    eid = self._einheit_id(g["einheit"])
+                    if eid is None:
+                        unbekannt.append(f'{g["nr"]} ({g["einheit"]})')
+                        continue
+                    alt = self.store.db.execute("SELECT status FROM rechnungen WHERE nr = ?", (g["nr"],)).fetchone()
+                    status = _status(g.get("status", "")) if "status" in zuordnung else (alt[0] if alt else "offen")
+                    if alt and alt[0] == "bezahlt" and "status" not in zuordnung:
+                        status = "bezahlt"
+                    self.store.db.execute(
+                        "INSERT INTO rechnungen VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(nr) DO UPDATE SET "
+                        "einheit=excluded.einheit, empfaenger=excluded.empfaenger, von=excluded.von, bis=excluded.bis, "
+                        "betrag=excluded.betrag, status=excluded.status, faellig=excluded.faellig, pdf=excluded.pdf, "
+                        "geaendert=excluded.geaendert, geaendert_von=excluded.geaendert_von",
+                        (g["nr"], eid, g.get("empfaenger", ""), _datum(g.get("von", "")), _datum(g.get("bis", "")),
+                         _betrag(g["betrag"]), status, _datum(g.get("faellig", "")), g.get("pdf", ""), jetzt, von))
+                    if alt:
+                        aktualisiert += 1
+                    else:
+                        neu += 1
+            except (csv.Error, sqlite3.Error) as e:
+                self.store.db.rollback()
+                raise ValueError(f"CSV konnte nicht gelesen werden: {e}") from e
             self.store.db.commit()
         return {"neu": neu, "aktualisiert": aktualisiert, "nicht_zugeordnet": unbekannt}
 

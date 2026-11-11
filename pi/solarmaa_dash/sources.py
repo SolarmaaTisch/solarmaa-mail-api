@@ -26,6 +26,8 @@ class Snapshot:
     import_wh_total: float | None = None
     export_wh_total: float | None = None
     soc_geschaetzt: bool = False
+    pv_gemessen: bool = True          # False: PV-Gerät fehlt oder ausgefallen, pv_w ist dann 0
+    grid_alter_s: float = 0.0         # Alter des Netz-Messwerts (Cloud-Zähler liefern zwischengespeicherte Werte)
     verbraucher: list | None = None   # einzeln gemessene Verbraucher (Wallbox, Steckdosen), im load_w enthalten
 
     @property
@@ -255,6 +257,7 @@ class AnlagenQuelle:
         pv = grid = bat = soc = None
         pv_wh = imp = exp = None
         verbraucher: list[dict] = []
+        pv_fehler, grid_alter = False, 0.0
 
         def add(a, b):
             return b if a is None else (a if b is None else a + b)
@@ -271,7 +274,11 @@ class AnlagenQuelle:
                     continue
                 if g.get("optional") or g["rolle"] == "speicher":
                     continue
-                raise type(e)(f"{name}: {e}") from e
+                if g["rolle"] == "pv":
+                    pv_fehler = True   # Netz und Regelung laufen weiter, PV gilt als nicht gemessen
+                    continue
+                from .geraete import GeraetFehler
+                raise GeraetFehler(f"{name}: {e}") from e
             r = g["rolle"]
             if r == "verbraucher":
                 art = g.get("art") or ("wallbox" if g["typ"] in ("goe", "easee") else "geraet")
@@ -282,6 +289,7 @@ class AnlagenQuelle:
                 pv = add(pv, abs(m.w) if m.w is not None else None)
                 pv_wh = add(pv_wh, max(m.import_wh or 0.0, m.export_wh or 0.0) or None)
             elif r == "netz":
+                grid_alter = max(grid_alter, float(m.extra.get("alter_s", 0.0)))
                 grid = add(grid, m.w)
                 imp, exp = add(imp, m.import_wh), add(exp, m.export_wh)
             elif r == "speicher":
@@ -296,8 +304,11 @@ class AnlagenQuelle:
         if self.schaetzer is not None and soc is None:
             soc = self.schaetzer.update(now, bat, grid)
             geschaetzt = soc is not None
+        if grid is None and pv is None and bat is None:
+            from .geraete import GeraetFehler
+            raise GeraetFehler("Kein Gerät liefert Daten: " + "; ".join(f"{k}: {v}" for k, v in self.status.items() if v != "ok"))
         return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp, geschaetzt,
-                        verbraucher or None)
+                        pv is not None and not pv_fehler, grid_alter, verbraucher or None)
 
 
 def make_source(cfg: dict):

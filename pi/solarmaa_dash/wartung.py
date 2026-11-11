@@ -15,6 +15,7 @@ from . import __version__
 
 DATEN = Path("/var/lib/solarmaa-dash")
 SRC = Path("/opt/solarmaa-dash/src")
+UPDATE_LOG = Path("/var/log/solarmaa-dash/update.log")   # gehört root; der Dienst liest nur
 
 
 class Wartung:
@@ -32,7 +33,7 @@ class Wartung:
             return ""
 
     def status(self) -> dict:
-        log = self.daten / "update.log"
+        log = UPDATE_LOG
         anfrage = self.daten / "update-anfrage"
         return {
             "version": __version__,

@@ -129,7 +129,7 @@ class Alarme:
                              "behoben": "Behoben", "test": "Test"}[art]
                     self._senden(f"{self.anlage}: {titel}", text, stufe if art != "behoben" else "info")
                 self.versandfehler = None
-            except (GeraetFehler, OSError, smtplib.SMTPException) as e:
+            except Exception as e:  # noqa: BLE001 – der Sender darf nie sterben
                 self.versandfehler = f"{art}: {e}"
                 log.warning("Benachrichtigung fehlgeschlagen (%s): %s", art, e)
 
@@ -147,7 +147,7 @@ class Alarme:
                                              method="POST", headers={k: _hdr(v) for k, v in hdr.items()})
                 with urllib.request.urlopen(req, timeout=10):
                     pass
-            except OSError as e:
+            except Exception as e:  # noqa: BLE001
                 fehler.append(f"Push: {e}")
         if self.email:
             try:
@@ -167,7 +167,7 @@ class Alarme:
                     if self.email.get("benutzer"):
                         s.login(self.email["benutzer"], self.email.get("passwort", ""))
                     s.send_message(m)
-            except (OSError, smtplib.SMTPException) as e:
+            except Exception as e:  # noqa: BLE001
                 fehler.append(f"E-Mail: {e}")
         if fehler:
             raise OSError("; ".join(fehler))

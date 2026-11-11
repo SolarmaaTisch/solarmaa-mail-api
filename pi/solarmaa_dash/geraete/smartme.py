@@ -112,5 +112,8 @@ class SmartMeCloudZaehler:
         self.sign = vorzeichen(cfg)
 
     def lesen(self) -> Messung:
-        d = konto(self.cfg_smartme).finde(self.smartme_id, self.seriennummer)
-        return drehen(zu_messung(d), self.sign)
+        k = konto(self.cfg_smartme)
+        d = k.finde(self.smartme_id, self.seriennummer)
+        m = zu_messung(d)
+        m.extra["alter_s"] = max(0.0, time.time() - k._zeit)   # Wert stammt aus dem Zwischenspeicher
+        return drehen(m, self.sign)

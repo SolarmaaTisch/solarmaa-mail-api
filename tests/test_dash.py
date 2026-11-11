@@ -87,7 +87,13 @@ class FakeHandler(socketserver.BaseRequestHandler):
             if pdu[0] == 16:  # Write Multiple Registers: mitschneiden
                 _fc, addr, count, _bc = struct.unpack(">BHHB", pdu[:6])
                 werte = list(struct.unpack(f">{count}H", pdu[6:6 + 2 * count]))
+                if getattr(self.server, "write_fail", False):
+                    resp = struct.pack(">BB", 0x90, 4)
+                    self.request.sendall(struct.pack(">HHHB", tid, 0, len(resp) + 1, unit) + resp)
+                    continue
                 getattr(self.server, "writes", []).append((unit, addr, werte))
+                for i, v in enumerate(werte):
+                    self.server.units.setdefault(unit, {})[addr + i] = v
                 resp = struct.pack(">BHH", 16, addr, count)
                 self.request.sendall(struct.pack(">HHHB", tid, 0, len(resp) + 1, unit) + resp)
                 continue
