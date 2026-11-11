@@ -35,6 +35,7 @@ DEFAULTS: dict = {
     "geraet": [],
     "smartme": {"basis_url": "https://api.smart-me.com", "api_key": "", "benutzer": "", "passwort": "",
                 "cache_s": 30},
+    "easee": {"benutzer": "", "passwort": "", "basis_url": "https://api.easee.com"},
     "haus": {"aktiv": False},
     "server": {"host": "0.0.0.0", "port": 80, "app_pfad": ""},
     "daten": {"pfad": "/var/lib/solarmaa-dash/data.db", "aufbewahrung_tage": 800},

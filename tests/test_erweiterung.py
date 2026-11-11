@@ -34,6 +34,7 @@ class FakeHttp(ThreadingHTTPServer):
 
     def __init__(self, routes, need_key=None):
         self.routes, self.need_key = routes, need_key
+        self.posts, self.gets = [], 0
         super().__init__(("127.0.0.1", 0), FakeHttpHandler)
 
 
@@ -41,7 +42,21 @@ class FakeHttpHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def do_POST(self):  # noqa: N802
+        n = int(self.headers.get("Content-Length") or 0)
+        self.server.posts.append((self.path, json.loads(self.rfile.read(n) or b"null")))
+        body = self.server.routes.get("POST " + self.path)
+        if body is None:
+            self.send_response(404); self.end_headers(); return
+        data = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):  # noqa: N802
+        self.server.gets += 1
         if self.server.need_key and self.headers.get("Authorization") != self.server.need_key:
             self.send_response(401); self.end_headers(); return
         body = self.server.routes.get(self.path)
@@ -237,6 +252,74 @@ class EvoliumTests(unittest.TestCase):
             self.assertAlmostEqual(s.soc, 50.0)
         finally:
             for x in (srv, srv2, srv3):
+                x.shutdown(); x.server_close()
+
+
+class SteckerWallboxTests(unittest.TestCase):
+    def test_mystrom(self):
+        srv, host = start_http({"/report": {"power": 1234.5, "relay": True, "Ws": 1200.0,
+                                            "temperature": 24.1, "energy_since_boot": 7200000.0}})
+        try:
+            from solarmaa_dash.geraete.mystrom import MyStrom
+            m = MyStrom({"host": host}).lesen()
+            self.assertEqual((m.w, m.import_wh, m.extra["relais"]), (1234.5, 2000.0, True))
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_goe(self):
+        nrg = [230, 231, 229, 0, 16, 16, 16, 3680, 3690, 3670, 0, 11040, 99, 99, 99, 0]
+        srv, host = start_http({"/api/status?filter=nrg,car,wh,eto,amp":
+                                {"nrg": nrg, "car": 2, "wh": 5300.5, "eto": 1234000, "amp": 16}})
+        try:
+            from solarmaa_dash.geraete.goe import GoE
+            m = GoE({"host": host}).lesen()
+            self.assertEqual((m.w, m.import_wh), (11040.0, 1234000.0))
+            self.assertEqual((m.extra["status"], m.extra["laedt"], m.extra["sitzung_wh"]), ("lädt", True, 5300.5))
+        finally:
+            srv.shutdown(); srv.server_close()
+
+    def test_easee_cloud(self):
+        from solarmaa_dash.geraete import easee
+        easee._KONTEN.clear()
+        srv, host = start_http({
+            "POST /api/accounts/login": {"accessToken": "tok", "refreshToken": "ref", "expiresIn": 3600},
+            "/api/chargers/EH123456/state": {"totalPower": 7.2, "chargerOpMode": 3, "sessionEnergy": 12.5,
+                                             "lifetimeEnergy": 3456.7, "isOnline": True}})
+        try:
+            cfg = {"_easee": {"benutzer": "a@b.ch", "passwort": "x", "basis_url": f"http://{host}"},
+                   "charger_id": "EH123456"}
+            dev = easee.Easee(cfg)
+            m = dev.lesen()
+            self.assertEqual((m.w, m.extra["status"], m.extra["sitzung_wh"]), (7200.0, "lädt", 12500.0))
+            self.assertAlmostEqual(m.import_wh, 3456700.0)
+            dev.lesen()                                   # aus dem Zwischenspeicher
+            self.assertEqual(srv.gets, 1)
+            self.assertEqual(srv.posts[0][1]["userName"], "a@b.ch")
+        finally:
+            easee._KONTEN.clear()
+            srv.shutdown(); srv.server_close()
+
+    def test_wallbox_als_verbraucher(self):
+        nrg = [0] * 11 + [3700] + [0] * 4
+        srv, host = start_http({"/api/status?filter=nrg,car,wh,eto,amp": {"nrg": nrg, "car": 2, "eto": 1}})
+        srv2, host2 = start_http({"/shelly": {"gen": 2},
+                                  "/rpc/Shelly.GetStatus": {"em:0": {"total_act_power": 4200.0}, "emdata:0": {}}})
+        try:
+            cfg = config._merge(config.DEFAULTS, {"geraet": [
+                {"name": "Netz", "rolle": "netz", "typ": "shelly", "host": host2},
+                {"name": "Wallbox", "rolle": "verbraucher", "typ": "goe", "host": host},
+                {"name": "Kaputt", "rolle": "verbraucher", "typ": "mystrom", "host": "127.0.0.1:1"}]})
+            s = AnlagenQuelle(cfg).read()
+            self.assertEqual(s.load_w, 4200.0)          # Wallbox ist im Verbrauch enthalten
+            self.assertEqual(s.ev_w, 3700.0)
+            self.assertEqual([v["name"] for v in s.verbraucher], ["Wallbox", "Kaputt"])
+            self.assertIsNone(s.verbraucher[1]["w"])    # ausgefallener Stecker bricht nichts ab
+            st = Store(":memory:")
+            st.add(s)
+            st.add(Snapshot(s.ts + 60, 0.0, 4200.0, 4200.0, verbraucher=s.verbraucher))
+            self.assertAlmostEqual(st.today()["ev_wh"], 3700 / 60, places=1)
+        finally:
+            for x in (srv, srv2):
                 x.shutdown(); x.server_close()
 
 

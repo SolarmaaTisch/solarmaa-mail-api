@@ -26,7 +26,8 @@ intervall_s = 5
 #          netz      Zähler am Netzanschluss (+ Bezug, − Einspeisung)
 #          speicher  Batterie (+ Entladen, − Laden) und/oder Ladezustand
 #          anlage    Gerät liefert PV, Netz und Batterie auf einmal (Fronius, Huawei, GoodWe, Sigenergy)
-# Typen:   sunspec, fronius, shelly, smartme_cloud, modbus_profil (siehe docs/04-inbetriebnahme.md)
+#          verbraucher  einzeln gemessenes Gerät (Wallbox, Stecker); wird zusätzlich angezeigt
+# Typen:   sunspec, fronius, shelly, smartme_cloud, mystrom, goe, easee, modbus_profil
 #
 # Beispiel A: Wechselrichter mit SunSpec (SMA, SolarEdge, Kostal, Fronius, ...) + Netzzähler
 # [[geraet]]
@@ -77,6 +78,19 @@ intervall_s = 5
 # soc_schaetzen = true     # Ladezustand schätzen (App zeigt «ca.»), siehe docs/09-evolium.md
 # kapazitaet_kwh = 10
 #
+# Beispiel F: Wallbox und Stecker (Rolle «verbraucher», im Hausverbrauch enthalten)
+# [[geraet]]
+# name = "Wallbox"
+# rolle = "verbraucher"
+# typ = "goe"              # go-e lokal; Easee: typ = "easee", charger_id = "EH123456" + [easee]
+# host = "192.168.1.95"
+#
+# [[geraet]]
+# name = "Waschmaschine"
+# rolle = "verbraucher"
+# typ = "mystrom"
+# host = "192.168.1.90"
+#
 # Beispiel D: Fronius ohne Modbus (Solar API)
 # [[geraet]]
 # name = "Fronius"
@@ -112,6 +126,11 @@ api_key = ""
 # benutzer = ""
 # passwort = ""
 cache_s = 30
+
+# Easee-Cloud (nur für typ = "easee"; Easee hat keine lokale Schnittstelle)
+[easee]
+benutzer = ""
+passwort = ""
 
 # ---------------------------------------------------------------------------
 # Haus / ZEV (Mehrfamilienhaus, Mieterstrom). Ohne diesen Teil: nur Anlagen-Dashboard.

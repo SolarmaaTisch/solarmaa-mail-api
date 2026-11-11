@@ -12,6 +12,9 @@ Unterstützte Typen (config: ``typ``):
   fronius         Fronius Solar API (HTTP), auch ohne Modbus
   shelly          Shelly Gen1 bis Gen4 (Pro 3EM, EM, 3EM, Plus PM, Pro 4PM, ...)
   smartme_cloud   smart-me Zähler über die smart-me Cloud-API
+  mystrom         myStrom Switch (Zwischenstecker), lokal
+  goe             go-e Charger (Wallbox), lokale HTTP-API v2
+  easee           Easee Wallbox über die Easee-Cloud
   modbus_profil   beliebiges Modbus-TCP-Gerät mit Registerprofil (pi/solarmaa_dash/profile/*.toml),
                   z. B. Huawei SUN2000, smart-me lokal
 """
@@ -64,7 +67,16 @@ def erstelle(cfg: dict, rolle: str):
     if typ == "smartme_cloud":
         from .smartme import SmartMeCloudZaehler
         return SmartMeCloudZaehler(cfg)
+    if typ == "mystrom":
+        from .mystrom import MyStrom
+        return MyStrom(cfg)
+    if typ == "goe":
+        from .goe import GoE
+        return GoE(cfg)
+    if typ == "easee":
+        from .easee import Easee
+        return Easee(cfg)
     if typ == "modbus_profil":
         from .modbus_profil import ModbusProfilGeraet
         return ModbusProfilGeraet(cfg)
-    raise ValueError(f"Unbekannter Gerätetyp {typ!r} (erlaubt: sunspec, fronius, shelly, smartme_cloud, modbus_profil)")
+    raise ValueError(f"Unbekannter Gerätetyp {typ!r} (erlaubt: sunspec, fronius, shelly, smartme_cloud, mystrom, goe, easee, modbus_profil)")

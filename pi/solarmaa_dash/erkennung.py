@@ -4,10 +4,12 @@
   python3 -m solarmaa_dash erkennen --netz 10.0.0.0/24 --toml vorschlag.toml
 
 Ablauf pro Adresse:
-  1. Port 80 offen  → Shelly (/shelly) oder Fronius Solar API (/solar_api/GetAPIVersion.cgi)
+  1. Port 80 offen  → Shelly (/shelly), myStrom (/report), go-e (/api/status),
+                      Fronius Solar API (/solar_api/GetAPIVersion.cgi)
   2. Port 502 oder 1502 offen → SunSpec-Marker bei mehreren Unit-IDs; sonst Registerprofile mit
                       [erkennung]-Abschnitt (Huawei, GoodWe, Sigenergy, ...)
   3. smart-me: Zähler im Cloud-Konto (falls [smartme] eingerichtet)
+  Easee-Wallboxen haben keine lokale Schnittstelle; sie werden über [easee] und charger_id eingetragen.
 
 Ergebnis ist ein Vorschlag für die [[geraet]]-Blöcke. Die Rolle (PV, Netz, Speicher) lässt
 sich bei frei montierbaren Messgeräten wie Shelly nicht sicher erkennen: Vorschlag prüfen.
@@ -117,6 +119,22 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
             pass
         if not funde:
             try:
+                j = get_json(f"http://{host}/report", timeout=2)
+                if isinstance(j, dict) and "power" in j and "relay" in j:
+                    funde.append({"host": host, "typ": "mystrom", "modell": "myStrom Switch", "rolle": "verbraucher",
+                                  "hinweis": "Was hängt am Stecker? Name setzen; bei Balkonkraftwerk rolle = \"pv\""})
+            except GeraetFehler:
+                pass
+        if not funde:
+            try:
+                j = get_json(f"http://{host}/api/status?filter=car,eto", timeout=2)
+                if isinstance(j, dict) and "car" in j:
+                    funde.append({"host": host, "typ": "goe", "modell": "go-e Charger", "rolle": "verbraucher",
+                                  "art": "wallbox", "hinweis": ""})
+            except GeraetFehler:
+                pass
+        if not funde:
+            try:
                 j = get_json(f"http://{host}/solar_api/GetAPIVersion.cgi", timeout=2)
                 if isinstance(j, dict) and "APIVersion" in j:
                     funde.append({"host": host, "typ": "fronius", "modell": "Fronius (Solar API)",
@@ -196,6 +214,8 @@ def als_toml(funde: list[dict]) -> str:
             zeilen.append(f'unit = {f["unit"]}')
         if f.get("profil"):
             zeilen.append(f'profil = "{f["profil"]}"')
+        if f.get("art"):
+            zeilen.append(f'art = "{f["art"]}"')
         if f.get("hinweis"):
             zeilen.append(f'# {f["hinweis"]}')
         zeilen.append("")

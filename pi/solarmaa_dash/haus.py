@@ -73,7 +73,7 @@ class Haus:
                 zid = z.get("id") or f"{e['id']}-{len(ein['zaehler']) + 1}"
                 if zid in self.zaehler:
                     raise ValueError(f"Zähler-ID {zid} doppelt")
-                zc = {**z, "_smartme": cfg.get("smartme", {})}
+                zc = {**z, "_smartme": cfg.get("smartme", {}), "_easee": cfg.get("easee", {})}
                 seed += 1
                 dev = DemoZaehler(seed, 150 + 40 * (seed % 4)) if self.demo else erstelle(zc, "einheit")
                 self.zaehler[zid] = {"id": zid, "name": z.get("name", "Zähler"), "typ": z.get("typ", "demo"),

@@ -26,9 +26,21 @@ class Snapshot:
     import_wh_total: float | None = None
     export_wh_total: float | None = None
     soc_geschaetzt: bool = False
+    verbraucher: list | None = None   # einzeln gemessene Verbraucher (Wallbox, Steckdosen), im load_w enthalten
+
+    @property
+    def ev_w(self) -> float | None:
+        if not self.verbraucher:
+            return None
+        ws = [v["w"] for v in self.verbraucher if v.get("art") == "wallbox" and v.get("w") is not None]
+        return sum(ws) if ws else None
 
     def to_dict(self) -> dict:
-        return {k: (round(v, 1) if isinstance(v, float) else v) for k, v in asdict(self).items()}
+        d = {k: (round(v, 1) if isinstance(v, float) else v) for k, v in asdict(self).items()}
+        if self.verbraucher:
+            d["verbraucher"] = [{k: (round(v, 1) if isinstance(v, float) else v) for k, v in x.items()}
+                                for x in self.verbraucher]
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +88,10 @@ class DemoSource:
         dt = 0.0 if self._last is None else max(0.0, min(now - self._last, 60.0))
         self._last = now
         pv, load = self.pv_at(now), self.load_at(now)
+        lt = time.localtime(now)
+        h = lt.tm_hour + lt.tm_min / 60
+        ev = 3700.0 if 11.0 <= h < 13.5 and pv > 2500 else 0.0  # simuliertes Auto lädt über Mittag
+        load += ev
         surplus = pv - load
         if surplus > 0:  # laden
             room = (self.cap_wh * 0.95 - self.soc_wh) * 3600 / dt if dt else surplus
@@ -92,11 +108,13 @@ class DemoSource:
         else:
             self.exp_wh += -grid * dt / 3600
         return Snapshot(now, pv, grid, load, battery, 100 * self.soc_wh / self.cap_wh,
-                        self.pv_wh, self.imp_wh, self.exp_wh)
+                        self.pv_wh, self.imp_wh, self.exp_wh,
+                        verbraucher=[{"name": "Wallbox (Demo)", "art": "wallbox", "w": ev,
+                                      "status": "lädt" if ev else "verbunden", "laedt": ev > 0}])
 
 
 # ---------------------------------------------------------------------------
-ROLLEN = ("pv", "netz", "speicher", "anlage")
+ROLLEN = ("pv", "netz", "speicher", "anlage", "verbraucher")
 
 
 def geraete_aus_config(cfg: dict) -> list[dict]:
@@ -218,6 +236,7 @@ class AnlagenQuelle:
         self.geraete = []
         for g in geraete_aus_config(cfg):
             g.setdefault("_smartme", cfg.get("smartme", {}))
+            g.setdefault("_easee", cfg.get("easee", {}))
             self.geraete.append((g, erstelle(g, g["rolle"])))
         self.status: dict[str, str] = {}
         # Ladezustand schätzen, wenn ein Speicher nur gemessen wird (soc_schaetzen = true)
@@ -235,6 +254,7 @@ class AnlagenQuelle:
         now = time.time()
         pv = grid = bat = soc = None
         pv_wh = imp = exp = None
+        verbraucher: list[dict] = []
 
         def add(a, b):
             return b if a is None else (a if b is None else a + b)
@@ -246,10 +266,18 @@ class AnlagenQuelle:
                 self.status[name] = "ok"
             except Exception as e:
                 self.status[name] = str(e)
+                if g["rolle"] == "verbraucher":
+                    verbraucher.append({"name": name, "art": g.get("art", "geraet"), "w": None, "status": "keine Daten"})
+                    continue
                 if g.get("optional") or g["rolle"] == "speicher":
                     continue
                 raise type(e)(f"{name}: {e}") from e
             r = g["rolle"]
+            if r == "verbraucher":
+                art = g.get("art") or ("wallbox" if g["typ"] in ("goe", "easee") else "geraet")
+                verbraucher.append({"name": name, "art": art, "w": None if m.w is None else max(m.w, 0.0),
+                                    **{k: v for k, v in m.extra.items() if k in ("status", "laedt", "sitzung_wh", "relais")}})
+                continue
             if r == "pv":
                 pv = add(pv, abs(m.w) if m.w is not None else None)
                 pv_wh = add(pv_wh, max(m.import_wh or 0.0, m.export_wh or 0.0) or None)
@@ -268,7 +296,8 @@ class AnlagenQuelle:
         if self.schaetzer is not None and soc is None:
             soc = self.schaetzer.update(now, bat, grid)
             geschaetzt = soc is not None
-        return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp, geschaetzt)
+        return Snapshot(now, pv or 0.0, grid, load, bat, soc, pv_wh, imp, exp, geschaetzt,
+                        verbraucher or None)
 
 
 def make_source(cfg: dict):

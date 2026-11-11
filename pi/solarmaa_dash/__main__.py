@@ -168,7 +168,7 @@ def cmd_geraet_test(args) -> int:
         print("Keine echten Geräte konfiguriert (Demo-Modus).")
         return 0
     for gruppe, name, g, rolle in gruppen:
-        g = {**g, "_smartme": cfg.get("smartme", {})}
+        g = {**g, "_smartme": cfg.get("smartme", {}), "_easee": cfg.get("easee", {})}
         try:
             m = erstelle(g, rolle).lesen()
             werte = {k: (round(v, 1) if isinstance(v, float) else v) for k, v in vars(m).items()

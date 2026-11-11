@@ -33,12 +33,13 @@
       <h1 id="flowTitle">Jetzt</h1>
       <span class="muted" id="clock">–</span>
     </div>
-    <svg id="flow" class="flow" viewBox="0 0 360 330" role="img" aria-label="Energiefluss">
+    <svg id="flow" class="flow" viewBox="0 0 360 378" role="img" aria-label="Energiefluss">
       <g class="lines">
         <path id="lnPv"   class="ln ln-pv"   d="M180 82 V150"/>
         <path id="lnGrid" class="ln ln-grid" d="M89 165 H180"/>
         <path id="lnBat"  class="ln ln-bat"  d="M271 165 H180"/>
         <path id="lnHome" class="ln ln-home" d="M180 165 V232"/>
+        <path id="lnEv" class="ln ln-ev" d="M148 280 L88 294" display="none"/>
         <circle cx="180" cy="165" r="4" class="hub"/>
       </g>
       <g class="node node-pv" transform="translate(180 48)">
@@ -65,7 +66,14 @@
         <text class="val" x="48" y="-4" id="vHome">–</text>
         <text class="lbl" x="48" y="14">Verbrauch</text>
       </g>
+      <g class="node node-ev" id="nodeEv" transform="translate(60 302)" display="none">
+        <circle r="30" class="node-bg"/>
+        <g class="ico"><path d="M-13 4v-5l4-7h18l4 7v5zM-13 4h26"/><circle cx="-7" cy="6" r="3"/><circle cx="7" cy="6" r="3"/></g>
+        <text class="val" x="0" y="50" text-anchor="middle" id="vEv">–</text>
+        <text class="lbl" x="0" y="66" text-anchor="middle" id="lEv">Auto</text>
+      </g>
     </svg>
+    <div class="consumers" id="consumers" hidden></div>
   </section>
 
   <section class="today" aria-labelledby="todayTitle">
@@ -75,7 +83,7 @@
     </div>
     <div class="tiles">
       <div class="tile t-pv"><span class="t-lbl">Produziert</span><span class="t-val"><b id="tPv">–</b> kWh</span></div>
-      <div class="tile t-home"><span class="t-lbl">Verbraucht</span><span class="t-val"><b id="tHome">–</b> kWh</span></div>
+      <div class="tile t-home"><span class="t-lbl">Verbraucht</span><span class="t-val"><b id="tHome">–</b> kWh</span><span class="t-sub" id="tEv" hidden></span></div>
       <div class="tile t-exp"><span class="t-lbl">Eingespeist</span><span class="t-val"><b id="tExp">–</b> kWh</span></div>
       <div class="tile t-imp"><span class="t-lbl">Vom Netz</span><span class="t-val"><b id="tImp">–</b> kWh</span></div>
     </div>

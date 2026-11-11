@@ -2,7 +2,7 @@
 
 Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf der Hutschiene im Verteiler liest Wechselrichter, Zähler und Speicher aus und zeigt alles als App im Browser von Handy, Tablet oder PC. Lokal, ohne Cloud.
 
-- Geräte: SunSpec (viele Hersteller), Fronius, Huawei, GoodWe, Sigenergy, Shelly, smart-me; Erkennung automatisch
+- Geräte: SunSpec (viele Hersteller), Fronius, Huawei, GoodWe, Sigenergy, Shelly, smart-me, myStrom, Wallboxen go-e und Easee; Erkennung automatisch
 - Mehrfamilienhaus/ZEV: Hausskizze mit anklickbaren Zählern, Login mit Rollen, Rechnungen aus smart-me
 - Wartung im Browser: Web-Update mit Testlauf, Gerätestatus
 
@@ -17,6 +17,7 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 | [Wartung und Updates](docs/07-wartung-und-updates.md) | Web-Update, Fernzugriff, Geräteerkennung |
 | [Wechselrichter und Modbus TCP](docs/08-wechselrichter-modbus-tcp.md) | Was jede Marke über Modbus TCP liefert, Ports, Stolpersteine, wann RS485 |
 | [Evolium-Speicher](docs/09-evolium.md) | Anzeige über Shelly-Messung, geschätzter Ladezustand, Anfrage an Evolium |
+| [Stecker und Wallboxen](docs/10-stecker-und-wallboxen.md) | myStrom, go-e, Easee |
 
 ## Schnellstart (Demo auf dem eigenen Rechner)
 

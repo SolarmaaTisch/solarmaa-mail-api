@@ -61,8 +61,12 @@
       const bump = (c, w, a) => a * Math.exp(-(((h - c) / w) ** 2));
       return 320 + 60 * Math.sin(ts / 3e5) + bump(7.2, 0.5, 1400) + bump(12.2, 0.6, 1900) + bump(18.8, 1, 2100) + bump(21.5, 0.8, 700);
     }
+    function evAt(ts, pv) {
+      const d = new Date(ts), h = d.getHours() + d.getMinutes() / 60;
+      return h >= 11 && h < 13.5 && pv > 2500 ? 3700 : 0;
+    }
     function step(st, ts, dt) {
-      const pv = pvAt(ts), load = loadAt(ts), surplus = pv - load;
+      const pv = pvAt(ts), ev = evAt(ts, pv), load = loadAt(ts) + ev, surplus = pv - load;
       let bat;
       if (surplus > 0) bat = -Math.min(surplus, 3500, Math.max(0, ((CAP * 0.95 - st.soc) * 3600) / dt));
       else bat = Math.min(-surplus, 3500, Math.max(0, ((st.soc - CAP * 0.08) * 3600) / dt));
@@ -71,13 +75,17 @@
       st.e.pv_wh += pv * h; st.e.load_wh += load * h;
       if (grid > 0) st.e.import_wh += grid * h; else st.e.export_wh -= grid * h;
       if (bat > 0) st.e.discharge_wh += bat * h; else st.e.charge_wh -= bat * h;
-      return { ts: ts / 1000, pv_w: pv, load_w: load, grid_w: grid, battery_w: bat, soc: (100 * st.soc) / CAP };
+      st.e.ev_wh += ev * h;
+      return { ts: ts / 1000, pv_w: pv, load_w: load, grid_w: grid, battery_w: bat, soc: (100 * st.soc) / CAP,
+        verbraucher: [{ name: "Wallbox", art: "wallbox", w: ev, status: ev ? "lädt" : "verbunden", laedt: ev > 0 },
+          { name: "Waschmaschine", art: "geraet", w: new Date(ts).getHours() === 10 ? 1900 : 0 },
+          { name: "Boiler", art: "geraet", w: new Date(ts).getHours() >= 12 && new Date(ts).getHours() < 14 ? 2000 : 0 }] };
     }
     const ratios = (e) => ({
       eigenverbrauch_pct: e.pv_wh > 50 ? Math.max(0, Math.min(100, (100 * (e.pv_wh - e.export_wh)) / e.pv_wh)) : null,
       autarkie_pct: e.load_wh > 50 ? Math.max(0, Math.min(100, (100 * (e.load_wh - e.import_wh)) / e.load_wh)) : null,
     });
-    const blank = () => ({ pv_wh: 0, load_wh: 0, import_wh: 0, export_wh: 0, charge_wh: 0, discharge_wh: 0 });
+    const blank = () => ({ pv_wh: 0, load_wh: 0, import_wh: 0, export_wh: 0, charge_wh: 0, discharge_wh: 0, ev_wh: 0 });
     const cache = new Map();
     function simDay(day, until) {
       const t0 = startOfDay(day).getTime(), end = Math.min(t0 + 86400000, until ?? Infinity);
@@ -233,12 +241,15 @@
       } else {
         $("vBat").textContent = ""; $("lBat").textContent = "";
       }
+      renderConsumers(l.verbraucher || []);
       $("clock").textContent = `Stand ${new Date(l.ts * 1000).toLocaleTimeString(LOCALE)}`;
     }
     const h = p.heute;
     if (h) {
       $("tPv").textContent = kwh(h.pv_wh);
       $("tHome").textContent = kwh(h.load_wh);
+      $("tEv").hidden = !(h.ev_wh > 50);
+      if (h.ev_wh > 50) $("tEv").textContent = `davon Auto ${kwh(h.ev_wh)} kWh`;
       $("tExp").textContent = kwh(h.export_wh);
       $("tImp").textContent = kwh(h.import_wh);
       setRing("ringSelf", h.eigenverbrauch_pct);
@@ -246,6 +257,26 @@
       $("todayDate").textContent = fromIso(h.day).toLocaleDateString(LOCALE, { weekday: "long", day: "numeric", month: "long" });
       renderExtra(h);
     }
+  }
+
+  function renderConsumers(list) {
+    const wb = list.filter((v) => v.art === "wallbox");
+    const show = wb.length > 0;
+    $("nodeEv").setAttribute("display", show ? "inline" : "none");
+    $("lnEv").setAttribute("display", show ? "inline" : "none");
+    if (show) {
+      const w = wb.reduce((a, v) => a + (v.w || 0), 0);
+      $("vEv").textContent = fmtW(w);
+      const st = wb.find((v) => v.laedt) ? "lädt" : wb[0].status || "Auto";
+      $("lEv").textContent = wb.length > 1 ? `${wb.length} Wallboxen · ${st}` : `Auto · ${st}`;
+      setLine("lnEv", w, false);
+    }
+    const rest = list.filter((v) => v.art !== "wallbox");
+    $("consumers").hidden = rest.length === 0;
+    $("consumers").innerHTML = rest.map((v) => {
+      const name = String(v.name).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      return `<span class="consumer${v.w ? "" : " off"}">${name} <b>${v.w == null ? "–" : fmtW(v.w)}</b></span>`;
+    }).join("");
   }
 
   function renderExtra(h) {

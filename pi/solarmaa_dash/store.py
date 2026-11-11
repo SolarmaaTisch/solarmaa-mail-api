@@ -13,7 +13,7 @@ from pathlib import Path
 from .sources import Snapshot
 
 MAX_GAP_S = 120  # grössere Lücken (Pi aus, Gerät weg) werden nicht integriert
-DAY_FIELDS = ("pv_wh", "load_wh", "import_wh", "export_wh", "charge_wh", "discharge_wh")
+DAY_FIELDS = ("pv_wh", "load_wh", "import_wh", "export_wh", "charge_wh", "discharge_wh", "ev_wh")
 MIN_FIELDS = ("pv_w", "grid_w", "load_w", "battery_w", "soc")
 
 
@@ -43,6 +43,10 @@ class Store:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS days (day TEXT PRIMARY KEY, "
             + ", ".join(f"{f} REAL NOT NULL DEFAULT 0" for f in DAY_FIELDS) + ")")
+        vorhanden = {r[1] for r in self.db.execute("PRAGMA table_info(days)")}
+        for f in DAY_FIELDS:  # ältere Datenbanken nachrüsten
+            if f not in vorhanden:
+                self.db.execute(f"ALTER TABLE days ADD COLUMN {f} REAL NOT NULL DEFAULT 0")
         self.db.commit()
         self.retention_days = retention_days
         self.lock = threading.Lock()
@@ -94,6 +98,8 @@ class Store:
                         e["import_wh" if s.grid_w > 0 else "export_wh"] += abs(s.grid_w) * h
                     if s.battery_w is not None:
                         e["discharge_wh" if s.battery_w > 0 else "charge_wh"] += abs(s.battery_w) * h
+                    if s.ev_w:
+                        e["ev_wh"] += s.ev_w * h
             self._last_ts = s.ts
 
             minute = int(s.ts // 60 * 60)
