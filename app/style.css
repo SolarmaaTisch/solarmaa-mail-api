@@ -192,3 +192,10 @@ button { font: inherit; color: inherit; }
 .t-sub { font-size: 0.78rem; color: var(--muted); }
 .curtail-band { background: var(--c-grid); color: #fff; text-align: center; font-size: 0.84rem; font-weight: 600; padding: 6px 16px; }
 .alarm-band { background: #c62828; color: #fff; text-align: center; font-size: 0.84rem; font-weight: 600; padding: 6px 16px; }
+
+/* Bedienung mit dem Finger: Ziele mindestens 44 px hoch */
+@media (pointer: coarse), (max-width: 640px) {
+  .tabs button { min-height: 44px; padding-inline: 16px; }
+  .nav-btn { width: 44px; height: 44px; }
+  .link-btn { min-height: 44px; display: inline-flex; align-items: center; padding-inline: 16px; }
+}

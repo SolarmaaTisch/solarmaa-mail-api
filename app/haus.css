@@ -149,3 +149,29 @@
 @media (max-width: 520px) { .sketch-card { padding: 14px 10px; } .sketch .floor-lbl { font-size: 11px; } }
 @media (max-width: 520px) { .kpi { padding: 8px 9px; } .kpi b { font-size: 1.02rem; } }
 .dot-warn { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--orange-soft); }
+
+/* Handy: nichts darf breiter als der Bildschirm werden */
+.detail { grid-template-columns: minmax(0, 1fr); }
+.d-sec, .d-head, .kpis { min-width: 0; }
+.kpi { min-width: 0; overflow-wrap: anywhere; }
+.perm-list li { flex-wrap: wrap; }
+.sketch .meter circle.hit, .sketch .meter.sel circle.hit, .sketch .meter.err circle.hit { fill: transparent; stroke: none; }
+@media (pointer: coarse), (max-width: 640px) {
+  .btn-primary, .btn-secondary, .tbl .act button, .tabs.small button { min-height: 44px; padding-inline: 16px; font-size: 0.86rem; }
+  summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+  .login-card input { min-height: 46px; font-size: 16px; } /* 16 px verhindert Zoom auf dem iPhone */
+  .top-nav { gap: 8px; }
+  .toolbar { justify-content: flex-start; }
+}
+@media (max-width: 640px) {
+  /* Tabellen als Karten statt seitlich schieben */
+  .tbl.stack thead { display: none; }
+  .tbl.stack, .tbl.stack tbody { display: block; }
+  .tbl.stack tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  .tbl.stack td { border: 0; padding: 0; }
+  .tbl.stack td.nr { font-weight: 650; }
+  .tbl.stack td.act { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; white-space: normal; }
+  .tbl.stack td.full { grid-column: 1 / -1; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis .kpi:last-child { grid-column: 1 / -1; }
+}

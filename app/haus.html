@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Solarmaa Haus</title>
 <meta name="theme-color" content="#b279d7">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="haus.css">
@@ -85,7 +87,7 @@
         <input type="file" id="csvFile" accept=".csv,text/csv" hidden>
       </div>
       <p class="notice" id="importResult" hidden></p>
-      <div class="table-wrap"><table class="tbl" id="rgTable"></table></div>
+      <div class="table-wrap"><table class="tbl stack" id="rgTable"></table></div>
     </div>
 
     <div class="view" id="view-wartung" hidden>

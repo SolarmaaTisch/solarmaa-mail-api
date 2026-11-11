@@ -261,6 +261,7 @@
   }
 
   function drawUnit(svg, e, x, y, w, hgt) {
+    const narrow = w < 170;
     const g = el("g", { class: `unit${e.zugriff ? "" : " locked"}${sel.einheit === e.id ? " sel" : ""}`, tabindex: e.zugriff ? 0 : -1, role: e.zugriff ? "button" : "img", "aria-label": e.name });
     g.append(el("rect", { x, y, width: w, height: hgt, rx: 8, class: "unit-box" }));
     const maxChars = Math.max(6, Math.floor((w - 16) / 7.4));
@@ -281,8 +282,9 @@
     g.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(e.id, null, true); } });
     svg.append(g);
     (e.zaehler || []).forEach((z, i) => {
-      const mx = x + 20 + i * 28, my = y + hgt - 16;
+      const mx = x + 20 + i * (narrow ? 40 : 30), my = y + hgt - 16;
       const m = el("g", { class: `meter${z.ok ? "" : " err"}${sel.zaehler === z.id ? " sel" : ""}`, tabindex: 0, role: "button", "aria-label": `Zähler ${z.name}` });
+      m.append(el("circle", { cx: mx, cy: my, r: 20, class: "hit" }));
       m.append(el("circle", { cx: mx, cy: my, r: 11 }));
       m.append(el("text", { x: mx, y: my + 3, "text-anchor": "middle" }, `Z${i + 1}`));
       m.append(el("title", {}, `${z.name}${z.ok ? "" : " (keine Daten)"}`));
@@ -344,8 +346,8 @@
         <p class="muted small-text">Solaranteil live verteilt nach Verbrauch. Massgebend ist die smart-me-Abrechnung.</p>
       </section>
       <section class="d-sec"><h3>Rechnungen</h3>
-        ${d.rechnungen.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Nr.</th><th>Periode</th><th class="num">Betrag</th><th>Status</th>${kann ? "<th></th>" : ""}</tr></thead><tbody>
-          ${d.rechnungen.map((r) => `<tr><td class="nr">${esc(r.nr)}</td><td>${dat(r.von)} – ${dat(r.bis)}<br><span class="muted small-text">fällig ${dat(r.faellig)}</span></td><td class="num">${r.betrag == null ? "–" : chf.format(r.betrag)}</td><td>${statusChip(r)}</td>${kann ? `<td class="act">${actions(r)}</td>` : ""}</tr>`).join("")}
+        ${d.rechnungen.length ? `<div class="table-wrap"><table class="tbl stack"><thead><tr><th>Nr.</th><th class="num">Betrag</th><th>Periode</th><th>Status</th>${kann ? "<th></th>" : ""}</tr></thead><tbody>
+          ${d.rechnungen.map((r) => `<tr><td class="nr">${esc(r.nr)}</td><td class="num">${r.betrag == null ? "–" : chf.format(r.betrag)}</td><td>${dat(r.von)} – ${dat(r.bis)}<br><span class="muted small-text">fällig ${dat(r.faellig)}</span></td><td>${statusChip(r)}</td>${kann ? `<td class="act">${actions(r)}</td>` : ""}</tr>`).join("")}
         </tbody></table></div>` : '<p class="muted">Noch keine Rechnungen importiert.</p>'}
       </section>`;
     if (d.berechtigte) {
@@ -410,8 +412,8 @@
     const offen = list.filter((r) => r.status !== "bezahlt").reduce((a, r) => a + (r.betrag || 0), 0);
     const ueber = list.filter((r) => r.ueberfaellig).reduce((a, r) => a + (r.betrag || 0), 0);
     $("rgSumme").textContent = `Offen ${chf.format(offen)} · davon überfällig ${chf.format(ueber)}`;
-    $("rgTable").innerHTML = `<thead><tr><th>Nr.</th><th>Einheit</th><th>Empfänger</th><th>Periode</th><th>Fällig</th><th class="num">Betrag</th><th>Status</th><th></th></tr></thead><tbody>
-      ${shown.map((r) => `<tr><td class="nr">${esc(r.nr)}</td><td>${esc(r.einheit_name || r.einheit)}</td><td>${esc(r.empfaenger)}</td><td>${dat(r.von)} – ${dat(r.bis)}</td><td>${dat(r.faellig)}</td><td class="num">${r.betrag == null ? "–" : chf.format(r.betrag)}</td><td>${statusChip(r)}</td><td class="act">${actions(r)}</td></tr>`).join("") || '<tr><td colspan="8" class="muted">Keine Rechnungen in dieser Auswahl.</td></tr>'}
+    $("rgTable").innerHTML = `<thead><tr><th>Nr.</th><th class="num">Betrag</th><th>Einheit</th><th>Status</th><th>Empfänger</th><th>Periode</th><th>Fällig</th><th></th></tr></thead><tbody>
+      ${shown.map((r) => `<tr><td class="nr">${esc(r.nr)}</td><td class="num">${r.betrag == null ? "–" : chf.format(r.betrag)}</td><td>${esc(r.einheit_name || r.einheit)}</td><td>${statusChip(r)}</td><td class="full muted">${esc(r.empfaenger)}</td><td>${dat(r.von)} – ${dat(r.bis)}</td><td class="muted">fällig ${dat(r.faellig)}</td><td class="act">${actions(r)}</td></tr>`).join("") || '<tr><td colspan="8" class="muted">Keine Rechnungen in dieser Auswahl.</td></tr>'}
     </tbody>`;
     bindActions($("rgTable"), loadRechnungen);
   }
