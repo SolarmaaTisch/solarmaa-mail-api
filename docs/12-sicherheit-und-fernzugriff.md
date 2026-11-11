@@ -49,6 +49,10 @@ Für Zugriff von unterwegs gibt es zwei saubere Wege:
 3. **ntfy-Thema.** Auf dem öffentlichen Server ntfy.sh kann jeder mitlesen, der den Themennamen kennt. Langen, zufälligen Namen wählen oder einen eigenen ntfy-Server mit Zugangsschutz betreiben.
 4. **Was der Wechselrichter tut, wenn der Pi ganz ausfällt** (Strom weg während Abregelung), bestimmt der PIKO CI selbst. Mit Kostal klären, ob die Vorgabe dann bestehen bleibt, und das Lebenszeichen (healthchecks.io) einrichten, damit ein Pi-Ausfall auffällt.
 
+## Verwaltung im Browser
+
+Konfiguration und Benutzer lassen sich als `admin` im Browser bearbeiten. Dafür darf der Dienst die Datei `/etc/solarmaa-dash/config.toml` schreiben (nur diese eine Datei). Geheime Werte werden maskiert übertragen. Weil die Verbindung im Heimnetz unverschlüsselt ist, gilt weiterhin: neue Passwörter und Tokens möglichst über eine verschlüsselte Verbindung (Tailscale) eintragen.
+
 ## Nicht geprüft
 
 - Installation und Update auf einem echten Raspberry Pi (`install.sh`, systemd-Einheiten).

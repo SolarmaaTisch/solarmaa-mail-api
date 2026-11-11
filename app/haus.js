@@ -36,6 +36,11 @@
     status(nr, status) { return this.req("POST", "/api/rechnungen/status", { nr, status }); },
     importCsv(text) { return this.req("POST", "/api/rechnungen/import", text, "text/csv"); },
     wartung() { return this.req("GET", "/api/wartung"); },
+    einrichtung() { return this.req("GET", "/api/einrichtung"); },
+    einrichten(code, benutzer, passwort) { return this.req("POST", "/api/einrichtung", { code, benutzer, passwort }); },
+    konfig() { return this.req("GET", "/api/wartung/konfig"); },
+    konfigSpeichern(text) { return this.req("POST", "/api/wartung/konfig", { text }); },
+    benutzer(d) { return this.req("POST", "/api/benutzer", d); },
     update() { return this.req("POST", "/api/wartung/update"); },
     erkennen() { return this.req("POST", "/api/wartung/erkennen"); },
   };
@@ -122,10 +127,15 @@
       async wartung() {
         if (!me || me.rolle !== "admin") throw new ApiFehler(403, "Nur für Solarmaa (Rolle admin)");
         return { version: "1.1.0", commit: "demo", stand: new Date().toLocaleString(L), update_wartet: false, update_eingerichtet: true,
-          update_log: "=== Update (Beispiel) ===\nBereits aktuell (demo).", geraete: [{ name: "Fronius Symo GEN24", rolle: "anlage", typ: "fronius", ok: true }, { name: "Shelly Pro 3EM Netz", rolle: "netz", typ: "shelly", ok: true }],
+          update_log: "=== Update (Beispiel) ===\nBereits aktuell (demo).", benutzer: Object.values(USERS), einheiten: E.map((e) => ({ id: e.id, name: e.name })), geraete: [{ name: "Fronius Symo GEN24", rolle: "anlage", typ: "fronius", ok: true }, { name: "Shelly Pro 3EM Netz", rolle: "netz", typ: "shelly", ok: true }],
           geraete_fehler: {}, haus_zaehler: E.flatMap((e) => e.zaehler.map((z) => ({ id: z.id, name: `${e.name}: ${z.name}`, fehler: null }))), erkennung: scan };
       },
       async update() { return { ok: true, hinweis: "Demo: Es wird nichts installiert." }; },
+      async einrichtung() { return { offen: false }; },
+      async einrichten() { throw new ApiFehler(400, "In der Demo nicht möglich"); },
+      async konfig() { return { text: '# Demo\n[anlage]\nname = "MFH Beispielstrasse 12"\nkwp = 71.8\n\n[smartme]\napi_key = "********"\n', schreibbar: true }; },
+      async konfigSpeichern() { throw new ApiFehler(400, "Demo: Speichern ist nur auf dem Pi möglich."); },
+      async benutzer() { throw new ApiFehler(400, "Demo: Benutzer werden nur auf dem Pi verwaltet."); },
       async erkennen() {
         scan = { laeuft: true, funde: null, fortschritt: "0/254" };
         let i = 0;
@@ -151,6 +161,8 @@
     $("loginView").hidden = false; $("appView").hidden = true;
     $("userChip").hidden = true; $("logout").hidden = true;
     $("demoHint").hidden = !DEMO;
+    $("setupView").hidden = true;
+    api.einrichtung().then((r) => { $("setupHint").hidden = !r.offen; }).catch(() => {});
     if (msg) { $("loginError").textContent = msg; $("loginError").hidden = false; }
     $("benutzer").focus();
   }
@@ -162,7 +174,11 @@
     const alles = me.rolle !== "mieter";
     $("tab-rechnungen").hidden = !alles;
     $("tab-wartung").hidden = me.rolle !== "admin";
-    setView("haus");
+    $("setupView").hidden = true;
+    api.haus().then(() => { $("tab-haus").hidden = false; setView("haus"); })
+      .catch((e) => {
+        if (e.status === 404) { $("tab-haus").hidden = true; setView(me.rolle === "admin" ? "wartung" : "haus"); } else setView("haus");
+      });
   }
 
   function setView(v) {
@@ -431,7 +447,65 @@
     renderScan(w.erkennung || {});
     renderAbregelung(w.abregelung);
     renderAlarme(w.alarme);
+    renderBenutzer(w);
   }
+
+  function renderBenutzer(w) {
+    $("userList").innerHTML = (w.benutzer || []).map((b) => `<li><span>${esc(b.anzeigename || b.name)} <span class="muted">(${esc(b.name)})</span></span><span class="muted">${esc(ROLLE[b.rolle] || b.rolle)}${b.einheit ? " · " + esc(b.einheit) : ""} ${b.name === me.name ? "" : `<button class="btn-secondary" data-del="${esc(b.name)}">Löschen</button>`}</span></li>`).join("");
+    $("userList").querySelectorAll("button[data-del]").forEach((b) => b.addEventListener("click", async () => {
+      if (b.dataset.sicher !== "1") { b.dataset.sicher = "1"; b.textContent = "Wirklich löschen?"; b.classList.add("btn-danger"); return; }
+      try { await guard(() => api.benutzer({ aktion: "loeschen", name: b.dataset.del })); loadWartung(); }
+      catch (e) { alertInline($("userList"), e.message); }
+    }));
+    const sel = $("uEinheit");
+    if (!sel.options.length) (w.einheiten || []).forEach((e) => sel.append(new Option(e.name, e.id)));
+    const sync = () => { const m = $("uRolle").value === "mieter"; sel.hidden = !m; $("uEinheitLbl").hidden = !m; };
+    $("uRolle").onchange = sync; sync();
+  }
+
+  $("userForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const err = $("userError"); err.hidden = true;
+    try {
+      await guard(() => api.benutzer({ aktion: "anlegen", name: $("uName").value.trim(), anzeigename: $("uAnzeige").value.trim(), rolle: $("uRolle").value, einheit: $("uRolle").value === "mieter" ? $("uEinheit").value : "", passwort: $("uPw").value }));
+      $("uPw").value = ""; $("uName").value = ""; $("uAnzeige").value = "";
+      loadWartung();
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+  });
+
+  $("cfgLoad").addEventListener("click", async () => {
+    const err = $("cfgError"); err.hidden = true;
+    try {
+      const k = await guard(() => api.konfig());
+      if (!k) return;
+      $("cfgText").value = k.text; $("cfgText").hidden = false; $("cfgRow").hidden = false;
+      $("cfgHint").textContent = k.schreibbar ? "" : "Datei ist nicht schreibbar: zuerst «Update installieren» ausführen.";
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+  });
+  $("cfgSave").addEventListener("click", async () => {
+    const err = $("cfgError"), b = $("cfgSave"); err.hidden = true;
+    if (b.dataset.sicher !== "1") { b.dataset.sicher = "1"; b.textContent = "Wirklich speichern und neu starten?"; return; }
+    b.dataset.sicher = ""; b.textContent = "Prüfen und speichern"; b.disabled = true;
+    try {
+      const r = await guard(() => api.konfigSpeichern($("cfgText").value));
+      $("cfgHint").textContent = (r?.hinweis || "") + " Die Seite lädt in 15 Sekunden neu.";
+      setTimeout(() => location.reload(), 15000);
+    } catch (e) { err.textContent = e.message; err.hidden = false; b.disabled = false; }
+  });
+
+  $("setupOpen").addEventListener("click", () => { $("loginView").hidden = true; $("setupView").hidden = false; $("setupCode").focus(); });
+  $("setupForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const err = $("setupError"); err.hidden = true; $("setupBtn").disabled = true;
+    try {
+      const name = $("setupName").value.trim(), pw = $("setupPw").value;
+      await api.einrichten($("setupCode").value, name, pw);
+      me = await api.login(name, pw);
+      $("setupPw").value = "";
+      showApp();
+    } catch (e) { err.textContent = e.message; err.hidden = false; }
+    finally { $("setupBtn").disabled = false; }
+  });
 
   function renderAlarme(a) {
     if (!a) return;

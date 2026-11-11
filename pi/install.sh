@@ -89,7 +89,16 @@ if [[ ! -f "$CONF_DIR/config.toml" ]]; then
   install -m 640 -g "$USER_NAME" "$REPO_DIR/pi/config.example.toml" "$CONF_DIR/config.toml"
 fi
 # Konfiguration kann Passwörter/API-Keys enthalten: nur root und der Dienst dürfen lesen
-chown root:"$USER_NAME" "$CONF_DIR/config.toml"; chmod 640 "$CONF_DIR/config.toml"
+# Schreibbar für den Dienst, damit die Konfiguration im Browser (Wartung) bearbeitet werden kann.
+chown root:"$USER_NAME" "$CONF_DIR/config.toml"; chmod 660 "$CONF_DIR/config.toml"
+
+# Einmal-Code für die Ersteinrichtung im Browser (erster Admin). Wird nach Gebrauch gelöscht.
+CODE_DATEI=/var/lib/solarmaa-dash/einrichtung-code
+if [[ $IS_UPDATE -eq 0 && ! -f "$CODE_DATEI" ]]; then
+  CODE=$(tr -dc 'A-HJ-NP-Z2-9' < /dev/urandom | head -c 8)
+  echo "${CODE:0:4}-${CODE:4:4}" > "$CODE_DATEI"
+  chown "$USER_NAME":"$USER_NAME" "$CODE_DATEI"; chmod 600 "$CODE_DATEI"
+fi
 
 if [[ -n "$NEW_HOSTNAME" ]]; then
   echo "==> Hostname: $NEW_HOSTNAME (erreichbar als http://$NEW_HOSTNAME.local)"
@@ -119,4 +128,7 @@ systemctl --no-pager --lines=5 status solarmaa-dash || true
 IP=$(hostname -I | awk '{print $1}')
 echo
 echo "Fertig. Dashboard: http://$(hostname).local  oder  http://$IP"
-echo "Konfiguration:  sudo nano $CONF_DIR/config.toml  danach  sudo systemctl restart solarmaa-dash"
+echo "Einrichtung im Browser:  http://$(hostname).local/haus.html"
+if [[ -f /var/lib/solarmaa-dash/einrichtung-code ]]; then
+  echo "Einrichtungs-Code (für das erste Admin-Konto):  $(cat /var/lib/solarmaa-dash/einrichtung-code)"
+fi

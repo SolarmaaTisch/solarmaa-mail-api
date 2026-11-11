@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 import threading
 import time
@@ -59,6 +60,8 @@ class Auth:
             raise ValueError(f"Rolle muss eine von {', '.join(ROLLEN)} sein")
         if rolle == "mieter" and not einheit:
             raise ValueError("Mieter brauchen eine Einheit (--einheit)")
+        if not re.fullmatch(r"[A-Za-z0-9._@-]{1,40}", name or ""):
+            raise ValueError("Benutzername: höchstens 40 Zeichen, nur Buchstaben, Ziffern und . _ @ -")
         if len(pw) < 10:
             raise ValueError("Passwort muss mindestens 10 Zeichen haben")
         with self.store.lock:
@@ -82,6 +85,29 @@ class Auth:
             rows = self.store.db.execute(
                 "SELECT name, anzeigename, rolle, einheit, letzter_login FROM benutzer ORDER BY rolle, name").fetchall()
         return [dict(zip(("name", "anzeigename", "rolle", "einheit", "letzter_login"), r)) for r in rows]
+
+    def admins(self) -> int:
+        return sum(1 for b in self.liste() if b["rolle"] == "admin")
+
+    # -- Ersteinrichtung: erster Admin über den Browser, geschützt durch einen Einmal-Code --------
+    def einrichtung_offen(self) -> bool:
+        return self.admins() == 0
+
+    def einrichten(self, code: str, code_datei, name: str, pw: str) -> None:
+        if not self.einrichtung_offen():
+            raise ValueError("Die Ersteinrichtung ist bereits abgeschlossen")
+        try:
+            soll = code_datei.read_text().strip()
+        except OSError:
+            raise ValueError("Kein Einrichtungs-Code vorhanden. Installation erneut ausführen.") from None
+        if not soll or not hmac.compare_digest(soll.replace("-", "").upper(), (code or "").replace("-", "").replace(" ", "").upper()):
+            time.sleep(1.0)
+            raise ValueError("Einrichtungs-Code stimmt nicht")
+        self.anlegen(name, pw, "admin", anzeigename=name)
+        try:
+            code_datei.unlink()
+        except OSError:
+            pass
 
     def berechtigte(self, einheit: str) -> list[dict]:
         return [b for b in self.liste() if b["rolle"] in ("admin", "verwaltung") or b["einheit"] == einheit]

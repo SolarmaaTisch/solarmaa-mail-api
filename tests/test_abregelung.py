@@ -342,5 +342,59 @@ class BenachrichtigungTests(unittest.TestCase):
             srv.shutdown(); srv.server_close()
 
 
+
+
+class KonfigWebTests(unittest.TestCase):
+    ALT = '[smartme]\napi_key = "geheim1"\n\n[[geraet]]\nname = "A"\npasswort = "p1"\n\n[[geraet]]\nname = "B"\npasswort = "p2"\n'
+
+    def test_maskieren_und_wiederherstellen(self):
+        from solarmaa_dash.konfig_web import MASKE, demaskieren, maskieren
+        m = maskieren(self.ALT)
+        self.assertNotIn("geheim1", m)
+        self.assertNotIn("p2", m)
+        self.assertEqual(m.count(MASKE), 3)
+        self.assertEqual(demaskieren(m, self.ALT), self.ALT)
+        neu = m.replace('name = "B"\npasswort = "' + MASKE + '"', 'name = "B"\npasswort = "neu"')
+        self.assertIn('passwort = "neu"', demaskieren(neu, self.ALT))
+        self.assertIn('passwort = "p1"', demaskieren(neu, self.ALT))
+        with self.assertRaises(ValueError):
+            demaskieren(m + '\n[easee]\npasswort = "' + MASKE + '"\n', self.ALT)
+
+    def test_speichern_prueft_und_sichert(self):
+        import tempfile
+        from solarmaa_dash.konfig_web import KonfigWeb
+        d = Path(tempfile.mkdtemp())
+        pfad = d / "config.toml"
+        pfad.write_text('[anlage]\nname = "Alt"\n[easee]\npasswort = "x"\n')
+        k = KonfigWeb(str(pfad), d)
+        text = k.lesen()["text"]
+        self.assertNotIn('"x"', text)
+        with self.assertRaises(ValueError):
+            k.speichern(text + '\n[[geraet]]\nname = "kaputt"\nrolle = "pv"\ntyp = "gibtsnicht"\nhost = "1.2.3.4"\n', "admin")
+        with self.assertRaises(ValueError):
+            k.speichern("das ist [kein toml", "admin")
+        self.assertIn('"Alt"', pfad.read_text())                 # nichts gespeichert
+        k.speichern(text.replace("Alt", "Neu"), "admin")
+        self.assertIn('name = "Neu"', pfad.read_text())
+        self.assertIn('passwort = "x"', pfad.read_text())         # Geheimnis erhalten
+        self.assertEqual(len(list((d / "config-sicherung").glob("*.toml"))), 1)
+
+    def test_ersteinrichtung_mit_code(self):
+        import tempfile
+        from solarmaa_dash.auth import Auth
+        from solarmaa_dash.store import Store
+        a = Auth(Store(":memory:"))
+        code = Path(tempfile.mkdtemp()) / "einrichtung-code"
+        code.write_text("ABCD-2345\n")
+        self.assertTrue(a.einrichtung_offen())
+        with self.assertRaises(ValueError):
+            a.einrichten("XXXX-XXXX", code, "chef", "sehr-langes-passwort")
+        a.einrichten("abcd 2345", code, "chef", "sehr-langes-passwort")
+        self.assertFalse(a.einrichtung_offen())
+        self.assertFalse(code.exists())
+        with self.assertRaises(ValueError):
+            a.einrichten("ABCD-2345", code, "zwei", "sehr-langes-passwort")
+
+
 if __name__ == "__main__":
     unittest.main()

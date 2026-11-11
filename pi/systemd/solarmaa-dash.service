@@ -20,7 +20,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/var/lib/solarmaa-dash
+ReadWritePaths=/var/lib/solarmaa-dash /etc/solarmaa-dash/config.toml
 
 [Install]
 WantedBy=multi-user.target

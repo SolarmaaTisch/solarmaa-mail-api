@@ -41,7 +41,23 @@
       <p class="form-error" id="loginError" role="alert" hidden></p>
       <button type="submit" class="btn-primary" id="loginBtn">Anmelden</button>
     </form>
+    <p class="demo-hint" id="setupHint" hidden><button class="btn-secondary" id="setupOpen" type="button">Ersteinrichtung: Admin-Konto anlegen</button></p>
     <p class="demo-hint muted" id="demoHint" hidden>Demo-Zugänge: <b>solarmaa</b>, <b>verwaltung</b> oder <b>mieter</b>, Passwort <b>demo-passwort</b></p>
+  </section>
+
+  <section class="login-card" id="setupView" hidden>
+    <h1>Ersteinrichtung</h1>
+    <p class="muted">Legt das erste Admin-Konto an. Der Einrichtungs-Code steht am Ende der Installation.</p>
+    <form id="setupForm" novalidate>
+      <label for="setupCode">Einrichtungs-Code</label>
+      <input id="setupCode" autocomplete="off" autocapitalize="characters" placeholder="XXXX-XXXX" required>
+      <label for="setupName">Benutzername</label>
+      <input id="setupName" autocomplete="username" required>
+      <label for="setupPw">Passwort (mindestens 10 Zeichen)</label>
+      <input id="setupPw" type="password" autocomplete="new-password" required>
+      <p class="form-error" id="setupError" role="alert" hidden></p>
+      <button type="submit" class="btn-primary" id="setupBtn">Konto anlegen</button>
+    </form>
   </section>
 
   <!-- Inhalt nach Login -->
@@ -117,6 +133,33 @@
           </div>
           <p class="muted small-text" id="alarmKanaele"></p>
           <ul class="dev-list" id="alarmListe"></ul>
+        </section>
+        <section class="panel wide">
+          <h2>Benutzer</h2>
+          <ul class="perm-list" id="userList"></ul>
+          <details class="mt">
+            <summary>Benutzer anlegen oder Passwort neu setzen</summary>
+            <form id="userForm" class="form-grid" novalidate>
+              <label for="uName">Benutzername</label><input id="uName" autocomplete="off" required>
+              <label for="uAnzeige">Anzeigename</label><input id="uAnzeige" autocomplete="off">
+              <label for="uRolle">Rolle</label>
+              <select id="uRolle"><option value="mieter">Mieter/in</option><option value="verwaltung">Verwaltung</option><option value="admin">Solarmaa (Admin)</option></select>
+              <label for="uEinheit" id="uEinheitLbl">Einheit</label><select id="uEinheit"></select>
+              <label for="uPw">Passwort (mind. 10 Zeichen)</label><input id="uPw" type="password" autocomplete="new-password" required>
+              <p class="form-error" id="userError" role="alert" hidden></p>
+              <button type="submit" class="btn-primary">Speichern</button>
+            </form>
+          </details>
+        </section>
+        <section class="panel wide">
+          <div class="section-head">
+            <h2>Konfiguration</h2>
+            <button class="btn-secondary" id="cfgLoad">Laden</button>
+          </div>
+          <p class="muted small-text">Geräte, Haus, Abregelung und Benachrichtigung. Passwörter und Tokens erscheinen als ********; unverändert bleiben sie erhalten. Vor dem Speichern wird alles geprüft, die alte Fassung wird gesichert, danach startet der Dienst neu.</p>
+          <textarea id="cfgText" class="cfg" spellcheck="false" autocapitalize="off" autocomplete="off" hidden></textarea>
+          <p class="form-error" id="cfgError" role="alert" hidden></p>
+          <div class="confirm-row" id="cfgRow" hidden><button class="btn-primary" id="cfgSave">Prüfen und speichern</button><span class="muted small-text" id="cfgHint"></span></div>
         </section>
         <section class="panel wide" id="abrPanel" hidden>
           <div class="section-head">

@@ -55,6 +55,8 @@ class State:
         self.auth = auth
         self.rechnungen = rechnungen
         self.wartung = wartung
+        self.konfig = None           # KonfigWeb
+        self.code_datei = None       # Einmal-Code für die Ersteinrichtung
         self.abregelung = None
         from .benachrichtigung import KeineAlarme
         self.alarme = KeineAlarme()
@@ -269,6 +271,11 @@ def make_handler(state: State, app_dir: Path):
                                       200 if p["status"] == "ok" else 503)
                 if url.path == "/api/stream":
                     return self._stream()
+                if url.path == "/api/einrichtung":
+                    return self._json({"offen": bool(state.auth and state.auth.einrichtung_offen())})
+                if url.path == "/api/wartung/konfig":
+                    self._admin()
+                    return self._json(state.konfig.lesen())
                 if url.path == "/api/me":
                     return self._json(self._user())
                 if url.path == "/api/haus":
@@ -305,6 +312,9 @@ def make_handler(state: State, app_dir: Path):
                         abr = {**state.abregelung.status(), "protokoll": protokoll,
                                "preise": state.abregelung.preise.zeitreihe(jetzt - 3 * 3600, jetzt + 36 * 3600)}
                     return self._json({**state.wartung.status(), "abregelung": abr, "alarme": state.alarme.status(),
+                                       "benutzer": state.auth.liste(),
+                                       "einheiten": [{"id": e["id"], "name": e["name"]} for e in state.haus.einheiten]
+                                       if state.haus else [],
                                        "geraete": state.geraete_status(),
                                        "geraete_fehler": getattr(state.source, "status", {}),
                                        "haus_zaehler": [{**state.haus.zaehler_info(z), "name": f'{state.haus.einheit(zz["einheit"])["name"]}: {zz["name"]}'}
@@ -337,6 +347,44 @@ def make_handler(state: State, app_dir: Path):
                         raise HttpFehler(401, "Benutzername oder Passwort falsch")
                     cookie = f"{COOKIE}={tok}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SITZUNG_S}"
                     return self._json(state.auth.benutzer(tok), cookie=cookie)
+                if url.path == "/api/einrichtung":
+                    d = self._json_body()
+                    ip = self.client_address[0]
+                    if state.auth.gesperrt(ip):
+                        raise HttpFehler(429, "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.")
+                    try:
+                        state.auth.einrichten(str(d.get("code", "")), state.code_datei,
+                                              str(d.get("benutzer", "")).strip(), str(d.get("passwort", "")))
+                    except ValueError:
+                        with state.auth.flock:
+                            state.auth.fails.setdefault(ip, []).append(time.time())
+                        raise
+                    return self._json({"ok": True})
+                if url.path == "/api/wartung/konfig":
+                    u = self._admin()
+                    if state.abregelung and state.abregelung.aktiv:
+                        raise HttpFehler(409, "Gerade wird abgeregelt. Konfiguration bitte danach ändern.")
+                    state.konfig.speichern(str(self._json_body().get("text", "")), u["name"])
+                    state.konfig.neustart()
+                    return self._json({"ok": True, "hinweis": "Gespeichert. Der Dienst startet neu."})
+                if url.path == "/api/benutzer":
+                    u = self._admin()
+                    d = self._json_body()
+                    name = str(d.get("name", "")).strip()
+                    if d.get("aktion") == "loeschen":
+                        if name == u["name"]:
+                            raise HttpFehler(400, "Das eigene Konto kann nicht gelöscht werden")
+                        if not state.auth.loeschen(name):
+                            raise HttpFehler(404, "Benutzer nicht gefunden")
+                        return self._json({"ok": True})
+                    rolle = str(d.get("rolle", "mieter"))
+                    einheit = str(d.get("einheit", "")) or None
+                    if rolle == "mieter" and (state.haus is None or state.haus.einheit(einheit or "") is None):
+                        raise HttpFehler(400, "Für Mieter bitte eine vorhandene Einheit wählen")
+                    if name == u["name"] and rolle != "admin":
+                        raise HttpFehler(400, "Die eigene Rolle kann nicht herabgestuft werden")
+                    state.auth.anlegen(name, str(d.get("passwort", "")), rolle, einheit, str(d.get("anzeigename", "")))
+                    return self._json({"ok": True})
                 if url.path == "/api/logout":
                     state.auth.logout(self._token())
                     return self._json({"ok": True}, cookie=f"{COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")

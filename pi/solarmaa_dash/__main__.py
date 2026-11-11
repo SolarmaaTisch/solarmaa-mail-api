@@ -159,6 +159,11 @@ def cmd_run(args) -> int:
     from .benachrichtigung import Alarme, KeineAlarme
     from .wartung import Wartung
     state = State(cfg, store, source.name, source, haus, auth, rechnungen, Wartung(cfg))
+    from .konfig_web import KonfigWeb
+    cfg_pfad = args.config or (DEFAULT_CONFIG if Path(DEFAULT_CONFIG).is_file() else None)
+    daten_dir_k = None if cfg["daten"]["pfad"] == ":memory:" else Path(cfg["daten"]["pfad"]).parent
+    state.konfig = KonfigWeb(cfg_pfad, daten_dir_k)
+    state.code_datei = (daten_dir_k or Path(".")) / "einrichtung-code"
     b = cfg.get("benachrichtigung") or {}
     eingerichtet = any((b.get(k) or {}).get(f) for k, f in (("lampe", "host"), ("push", "thema"), ("email", "smtp_host")))
     state.alarme = Alarme(cfg) if eingerichtet else KeineAlarme()

@@ -11,6 +11,19 @@ In der Hausansicht (`/haus.html`) sieht ein Benutzer mit Rolle `admin` den Berei
 
 Für Anlagen ohne Hausansicht reicht dafür `[haus] aktiv = false`: Die Wartung braucht nur einen `admin`-Benutzer.
 
+## Alles im Browser, ohne Kommandozeile
+
+Nach der Installation braucht es keine PowerShell und kein SSH mehr:
+
+1. **Ersteinrichtung:** `http://<pi>/haus.html` öffnen → «Ersteinrichtung: Admin-Konto anlegen». Der Einrichtungs-Code steht am Ende der Installation (einmalig gültig).
+2. **Konfiguration:** Wartung → «Konfiguration» → Laden, bearbeiten, «Prüfen und speichern». Passwörter und Tokens erscheinen als `********` und bleiben erhalten, wenn man sie nicht ändert. Ungültige Eingaben werden mit Begründung abgelehnt, die alte Fassung wird gesichert (letzte 10 unter `/var/lib/solarmaa-dash/config-sicherung`), danach startet der Dienst neu.
+3. **Benutzer:** Wartung → «Benutzer»: anlegen, Passwort neu setzen, löschen.
+4. **Updates, Geräteerkennung, Alarmtest:** ebenfalls in der Wartung.
+
+Während einer Abregelung sind Konfigurationsänderung und Update gesperrt.
+
+**Von fern:** Die Wartung ist nur im Netz des Kunden erreichbar. Für den Zugriff aus dem Büro den Pi mit Tailscale verbinden (siehe unten); dann funktioniert alles oben genauso von überall.
+
 ## Wie das Update funktioniert
 
 1. `install.sh` legt eine Kopie des Git-Repositories unter `/opt/solarmaa-dash/src` an und merkt sich den Branch in `/etc/solarmaa-dash/update-branch`.

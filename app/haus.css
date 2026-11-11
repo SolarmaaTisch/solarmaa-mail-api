@@ -175,3 +175,9 @@
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpis .kpi:last-child { grid-column: 1 / -1; }
 }
+
+.cfg { width: 100%; min-height: 55vh; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); white-space: pre; overflow: auto; tab-size: 2; margin-bottom: 10px; }
+.form-grid { display: grid; gap: 6px; max-width: 420px; margin-top: 10px; }
+.form-grid label { font-size: 0.84rem; color: var(--muted); }
+.form-grid input, .form-grid select { font: inherit; font-size: 16px; min-height: 44px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.perm-list button { min-height: 36px; }
