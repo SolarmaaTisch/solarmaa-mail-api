@@ -46,6 +46,14 @@ def eigenes_netz() -> ipaddress.IPv4Network:
     return ipaddress.ip_network(f"{ip}/24", strict=False)
 
 
+def _hostname(host: str) -> str:
+    """Rückwärtsauflösung, z. B. whatwatt-1a2b3c.local (falls der Router Namen kennt)."""
+    try:
+        return socket.gethostbyaddr(host)[0]
+    except (OSError, UnicodeError):
+        return ""
+
+
 def port_offen(host: str, port: int, timeout: float = 0.6) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -121,9 +129,10 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
         if not funde:
             try:
                 j = get_json(f"http://{host}/api/v1/system", timeout=2)
-                if isinstance(j, dict) and "whatwatt" in json.dumps(j).lower():
-                    funde.append({"host": host, "typ": "whatwatt", "modell": "whatwatt Go", "rolle": "netz",
-                                  "hinweis": "Lizenz Plus nötig; Einheiten (kW/W) mit Zähleranzeige prüfen"})
+                if isinstance(j, dict) and "whatwatt" in (json.dumps(j) + _hostname(host)).lower():
+                    lic = ((j.get("device") or {}).get("license") or {}).get("type") if isinstance(j.get("device"), dict) else None
+                    funde.append({"host": host, "typ": "whatwatt", "modell": "whatwatt Go" + (f" ({lic})" if lic else ""),
+                                  "rolle": "netz", "hinweis": "Einheiten (kW/W) mit Zähleranzeige prüfen"})
             except GeraetFehler:
                 pass
         if not funde:

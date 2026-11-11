@@ -1,6 +1,8 @@
 """whatwatt Go: liest die Kundenschnittstelle des Smart Meters des Netzbetreibers aus.
 
-Lokal über HTTP: GET /api/v1/report (laut whatwatt nur mit Lizenz «Plus» oder höher).
+Lokal über HTTP: GET /api/v1/report. Verfügbarkeit je nach Firmware, Edition/Lizenz und
+Konfiguration (Lizenz steht in /api/v1/system unter device.license.type).
+Mit WebUI-Passwort: HTTP-Auth mit leerem Benutzernamen und dem Passwort.
 Feldpfade nach der Loxone-Integrationsanleitung von whatwatt:
   report.instantaneous_power.active.positive.total   Bezug (Leistung)
   report.instantaneous_power.active.negative.total   Einspeisung (Leistung)
@@ -29,7 +31,7 @@ def _pfad(d, *keys):
 class WhatWatt:
     def __init__(self, cfg: dict):
         self.host = cfg["host"]
-        self.user = cfg.get("benutzer") or "admin"
+        self.user = cfg.get("benutzer", "")  # whatwatt: Passwort ohne Benutzername (curl -u ":PASSWORT")
         self.password = cfg.get("passwort") or None
         self.pf = 1000.0 if str(cfg.get("leistung_einheit", "kW")).lower() == "kw" else 1.0
         self.ef = 1000.0 if str(cfg.get("energie_einheit", "kWh")).lower() == "kwh" else 1.0
@@ -41,7 +43,7 @@ class WhatWatt:
         except GeraetFehler as e:
             if "HTTP 403" in str(e) or "HTTP 404" in str(e):
                 raise GeraetFehler(f"whatwatt {self.host}: /api/v1/report nicht verfügbar. "
-                                   "Ist die Lizenz «Plus» aktiviert?") from e
+                                   "Firmware, Edition/Lizenz und REST-Dienst prüfen (/api/v1/system)") from e
             raise
         r = j.get("report") if isinstance(j, dict) else None
         if not isinstance(r, dict):

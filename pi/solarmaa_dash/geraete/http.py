@@ -49,10 +49,11 @@ def get_json(url: str, timeout: float = 5.0, user: str | None = None, password: 
             www = e.headers.get("WWW-Authenticate", "") if e.code == 401 else ""
             if not (www and password):
                 raise
+            name = "admin" if user is None else user  # leerer Name ist erlaubt (z. B. whatwatt)
             if www.lower().startswith("digest"):
-                auth = _digest_header(www, "GET", url, user or "admin", password)
+                auth = _digest_header(www, "GET", url, name, password)
             else:
-                auth = "Basic " + base64.b64encode(f"{user or 'admin'}:{password}".encode()).decode()
+                auth = "Basic " + base64.b64encode(f"{name}:{password}".encode()).decode()
             req = urllib.request.Request(url, headers={**hdrs, "Authorization": auth})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8"))

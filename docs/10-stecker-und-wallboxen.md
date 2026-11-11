@@ -80,7 +80,8 @@ charger_id = "EH123456"       # Seriennummer der Wallbox, steht in der Easee-App
 Der whatwatt Go steckt an der Kundenschnittstelle des Smart Meters und liefert Bezug und Einspeisung direkt vom Zähler des Netzbetreibers. Damit braucht es am Netzanschluss **keinen zusätzlichen Zähler** wie einen Shelly.
 
 Voraussetzungen und offene Punkte:
-- Die lokale REST-Schnittstelle `GET /api/v1/report` braucht laut whatwatt die **Lizenz «Plus»** oder höher. Ohne Lizenz liefert das Gerät dort keine Daten, und der Pi meldet das in `geraet-test`.
+- Welche Dienste (REST, MQTT, Modbus TCP) verfügbar sind, hängt laut whatwatt von Firmware, Edition/Lizenz und Konfiguration ab. Die Lizenz steht in `http://<ip>/api/v1/system` unter `device.license.type`. Liefert `/api/v1/report` nichts, meldet der Pi das in `geraet-test`.
+- Unterstützt werden u. a. Zähler von Landis+Gyr, Iskraemeco, Sagemcom, Kamstrup, Ensor, Siemens, Echelon/NES und **smart-me Nimbus** (P1). Gerät im Netz: `whatwatt-XXXXXX.local`.
 - Die Kundenschnittstelle muss beim Netzbetreiber freigeschaltet sein (je nach Werk auf Anfrage).
 - Die Feldpfade stammen aus der Loxone-Anleitung von whatwatt. Die Einheiten widersprechen sich in den Quellen (W/Wh oder kW/kWh). Standard ist kW/kWh. Bei der ersten Anlage die Werte mit der Anzeige des Smart Meters vergleichen und bei Bedarf umstellen.
 - MQTT und Modbus TCP des whatwatt (ebenfalls lizenzpflichtig) nutzt der Pi zurzeit nicht.
@@ -91,12 +92,13 @@ name = "Smart Meter (whatwatt)"
 rolle = "netz"
 typ = "whatwatt"
 host = "192.168.1.70"
-# benutzer = "admin"          # nur falls am whatwatt ein Passwort gesetzt ist
-# passwort = ""
+# passwort = ""               # nur falls das WebUI-Passwort gesetzt ist (Benutzername bleibt leer)
 leistung_einheit = "kW"       # "W", falls die App 1000-fach zu hohe Werte zeigt
 energie_einheit = "kWh"       # "Wh" entsprechend
 ```
 
-Im Mehrfamilienhaus kann ein whatwatt auch als Zähler einer Einheit stehen (`[[haus.einheit.zaehler]]`, `typ = "whatwatt"`). Die Geräteerkennung findet ihn, wenn `/api/v1/system` den Namen «whatwatt» enthält; sonst von Hand eintragen.
+Im Mehrfamilienhaus kann ein whatwatt auch als Zähler einer Einheit stehen (`[[haus.einheit.zaehler]]`, `typ = "whatwatt"`), z. B. an einem smart-me Nimbus: so liest der Pi den Zähler lokal statt über die smart-me-Cloud. Die Geräteerkennung findet whatwatt über `/api/v1/system` oder den Gerätenamen `whatwatt-…`; sonst von Hand eintragen.
+
+Noch offen: die genaue Struktur von `/api/v1/report` (Seite «Report Objects» der whatwatt-Doku) und damit die Einheiten.
 
 Quellen: [whatwatt Go API-Dokumentation](https://documentation.whatwatt.ch/), [Loxone-Integration](https://documentation.whatwatt.ch/60-integrations/loxone/), [Home-Assistant-Anleitung (PDF)](https://files.whatwatt.ch/whatwatt_Go_HomeAssistant_v1.5.pdf), [Modbus-TCP-Hinweise (clemap)](https://docs.clemap.com/help-center/whatwatt-go), [Eniris: whatwatt](https://docs.eniris.be/en/Controller/Devices/Energy-meter/WhatWatt)

@@ -78,7 +78,7 @@ intervall_s = 5
 # soc_schaetzen = true     # Ladezustand schätzen (App zeigt «ca.»), siehe docs/09-evolium.md
 # kapazitaet_kwh = 10
 #
-# Beispiel G: Netzanschluss über whatwatt Go am Smart Meter (Lizenz Plus)
+# Beispiel G: Netzanschluss über whatwatt Go am Smart Meter (Passwort ohne Benutzername)
 # [[geraet]]
 # name = "Smart Meter"
 # rolle = "netz"
