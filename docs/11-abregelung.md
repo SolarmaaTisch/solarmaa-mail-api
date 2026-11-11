@@ -71,8 +71,19 @@ Test: `python3 -m solarmaa_dash alarm-test -c /etc/solarmaa-dash/config.toml` od
 Ein Speicher hilft bei negativen Preisen: Er lädt den Überschuss, statt ihn abzuregeln.
 
 - **Zusammenspiel:** Der Huawei-Speicher regelt mit seinem eigenen Zähler auf Eigenverbrauch und lädt zuerst. Die Abregelung des Pi greift nur noch für den Rest, der trotzdem ins Netz ginge. Weil beide auf den Netzanschluss regeln, beim Test darauf achten, dass sie nicht gegeneinander schwingen. Gegebenenfalls `puffer_w` erhöhen oder `verstaerkung` senken.
-- **Anzeige:** Gewerbespeicher von Huawei (LUNA2000 C&I) hängen am SmartLogger 3000. Die Registerliste dafür gibt es nicht öffentlich. Vorlage: `pi/solarmaa_dash/profile/huawei_smartlogger_ess.toml`. Mit der Huawei-Datei «SmartLogger ModBus Interface Definitions» (über den Huawei-Installateur-Support) trage ich Ladezustand und Leistung ein.
-- **Bis dahin:** den Speicher-Abgang mit einem Shelly Pro 3EM (für die Stromstärke passende Wandler) messen, mit geschätztem Ladezustand wie bei Evolium.
+- **Anzeige über den SmartLogger 3000 (Modbus TCP, keine Zusatzhardware):** Profil `huawei_smartlogger_ess` liest Ladezustand (Register 37760) und Lade-/Entladeleistung (37765). Die Register stammen aus einer Community-Konfiguration für Batterien an Huawei-Wechselrichtern hinter dem SmartLogger. Ob der Gewerbespeicher (LUNA2000 C&I) dieselben Register nutzt, ist **nicht bestätigt**: bei der Inbetriebnahme mit `geraet-test` gegen die SmartLogger-Anzeige prüfen, sonst Register nach der Huawei-Datei «SmartLogger ModBus Interface Definitions» anpassen.
+
+  ```toml
+  [[geraet]]
+  name = "Huawei-Speicher"
+  rolle = "speicher"
+  typ = "modbus_profil"
+  profil = "huawei_smartlogger_ess"
+  host = "192.168.1.60"       # IP des SmartLogger
+  unit = 12                   # logische Adresse des Speichers im SmartLogger
+  ```
+  Am SmartLogger Modbus TCP aktivieren, feste IP, «Logical Addressing».
+- **Alternative über die Huawei-Cloud:** FusionSolar «Northbound API» (API-Konto im FusionSolar-Portal, Gerätetyp Speicher freigeben). Sie erlaubt laut Integrationen nur etwa einen Abruf pro Minute und Endpunkt. Noch nicht gebaut; sinnvoll nur, wenn Modbus am SmartLogger nicht geht.
 - **Später möglich:** Bei negativen Preisen den Speicher gezielt aus dem Netz laden (der Kunde wird dafür bezahlt). Dazu muss der Pi den SmartLogger steuern («Charge/Discharge based on grid dispatch»). Das braucht eine eigene Prüfung.
 
 ## Wichtig vor dem Feldtest

@@ -1,24 +1,34 @@
-# Huawei Gewerbespeicher (LUNA2000 C&I, z. B. LUNA2000-215) am SmartLogger 3000 – VORLAGE
+# Huawei-Speicher über den SmartLogger 3000 (Modbus TCP, nur lesen)
 #
-# Status: Registerliste NOCH NICHT eingetragen. Öffentlich war keine verlässliche Liste für
-# SmartLogger 3000 + LUNA2000-215 zu finden. Benötigt wird die Huawei-Datei
-# «SmartLogger ModBus Interface Definitions» (bzw. «Modbus Port Definitions» der ESS-Version)
-# passend zur Firmware – erhältlich über den Huawei-Installateur-Support.
+# Register: 37760 Ladezustand (U16, 0.1 %), 37765 Lade-/Entladeleistung (I32, W; Huawei: > 0 = Laden).
+# Quelle: Community-Konfiguration «ha-smartlogger3000-modbus-config» (theyo-tester). Laut dieser sind
+# die Batterie-Register über den SmartLogger dieselben wie bei direkter Verbindung zum Wechselrichter,
+# nur die Unit-ID (logische Adresse des Geräts im SmartLogger) unterscheidet sich.
 #
-# Voraussetzungen laut Huawei-Handbuch: Modbus TCP am SmartLogger aktivieren, feste IP,
-# «Logical Addressing». Die Unit-ID des Speichers ist im SmartLogger einsehbar.
+# UNGEPRÜFT für Gewerbespeicher (LUNA2000 C&I, z. B. LUNA2000-215): Diese haben ein eigenes
+# Leistungsteil und können andere Register nutzen. Massgebend ist die Huawei-Datei
+# «SmartLogger ModBus Interface Definitions» zur installierten Firmware. Mit «geraet-test»
+# gegen die Anzeige im SmartLogger prüfen; stimmen die Werte nicht, Register hier anpassen.
 #
-# Benötigte Werte, dann [werte.*] wie in huawei_sun2000.toml eintragen:
-#   soc        Ladezustand (%)
-#   battery_w  Lade-/Entladeleistung (Solarmaa: + Entladen, − Laden)
-# Rolle im Config: "speicher".
+# Am SmartLogger: Modbus TCP aktivieren, feste IP, «Logical Addressing». Unit-ID = logische
+# Adresse des Speichers bzw. des Wechselrichters mit Batterie (im SmartLogger ablesbar).
+# Der SmartLogger selbst hat die ID 0.
 #
-# Bis dahin: Speicher-Abgang mit Shelly Pro 3EM messen (rolle = "speicher",
-# soc_schaetzen = true, kapazitaet_kwh = 215), siehe docs/09-evolium.md.
+# Config:  rolle = "speicher", typ = "modbus_profil", profil = "huawei_smartlogger_ess",
+#          host = <IP SmartLogger>, unit = <logische Adresse>
 
-name = "Huawei LUNA2000 C&I (SmartLogger 3000)"
-vorlage = true
+name = "Huawei-Speicher (SmartLogger 3000)"
 geprueft = false
 rolle = "speicher"
 funktion = 3
 wortfolge = "gross"
+
+[werte.soc]
+register = 37760
+typ = "u16"
+faktor = 0.1
+
+[werte.w]              # Solarmaa: + Entladen, − Laden → faktor -1
+register = 37765
+typ = "i32"
+faktor = -1.0

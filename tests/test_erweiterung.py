@@ -156,13 +156,29 @@ class ProfilTests(unittest.TestCase):
                     lade_profil(p.stem)
             else:
                 prof = lade_profil(p.stem)
-                self.assertIn("erkennung", prof, p.stem)
+                if p.stem != "huawei_smartlogger_ess":   # Unit-ID anlagenabhängig, keine Erkennung
+                    self.assertIn("erkennung", prof, p.stem)
 
     def test_dekodiere(self):
         self.assertEqual(dekodiere([0xFFFF, 0xFC18], "i32", "gross"), -1000)
         self.assertEqual(dekodiere([0xFC18, 0xFFFF], "i32", "klein"), -1000)
         self.assertIsNone(dekodiere([0x8000], "i16", "gross"))
         self.assertAlmostEqual(dekodiere([0x4148, 0x0000], "f32", "gross"), 12.5)
+
+    def test_huawei_smartlogger_speicher(self):
+        regs = {37760: 655, 37765: 0xFFFF, 37766: 0xEC78}       # 65.5 %, −5000 (Huawei: entlädt)
+        srv = FakeModbus({12: regs})
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            cfg = config._merge(config.DEFAULTS, {"geraet": [
+                {"name": "Huawei", "rolle": "speicher", "typ": "modbus_profil", "profil": "huawei_smartlogger_ess",
+                 "host": "127.0.0.1", "port": srv.server_address[1], "unit": 12}]})
+            s = AnlagenQuelle(cfg).read()
+            self.assertAlmostEqual(s.soc, 65.5)
+            self.assertEqual(s.battery_w, 5000.0)                # + Entladen
+            self.assertFalse(s.soc_geschaetzt)
+        finally:
+            srv.shutdown(); srv.server_close()
 
     def test_sigenergy_profil_gegen_fake(self):
         def s32(v):
