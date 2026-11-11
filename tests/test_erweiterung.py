@@ -276,6 +276,33 @@ class EvoliumTests(unittest.TestCase):
                 x.shutdown(); x.server_close()
 
 
+class PortalTests(unittest.TestCase):
+    def test_pi_meldet_an_portal(self):
+        from solarmaa_dash.portal import Portal
+        srv, host = start_http({"POST /rest/v1/rpc/pi_melden": {"ok": True}})
+        try:
+            cfg = config._merge(config.DEFAULTS, {"portal": {"url": f"http://{host}", "schluessel": "k", "token": "t" * 48}})
+            store = Store(":memory:")
+            state = State(cfg, store, "demo")
+            snap = DemoSource().read()
+            store.add(snap); state.publish(snap)
+            p = Portal(cfg)
+            self.assertTrue(p.aktiv)
+            self.assertTrue(p.melden(state))
+            pfad, body = srv.posts[0]
+            self.assertEqual(body["p_token"], "t" * 48)
+            self.assertIn("pv_w", body["p_daten"]["live"])
+            self.assertEqual(body["p_daten"]["heute"]["day"], store.today()["day"])
+            srv.routes.clear()
+            self.assertFalse(p.melden(state))                 # Portal weg: nur Fehlertext, keine Ausnahme
+            self.assertIn("HTTP 404", p.fehler)
+        finally:
+            srv.shutdown(); srv.server_close()
+        self.assertFalse(Portal(config._merge(config.DEFAULTS, {})).aktiv)
+        with self.assertRaises(ValueError):
+            Portal(config._merge(config.DEFAULTS, {"portal": {"url": "http://unsicher.example", "schluessel": "k", "token": "t"}}))
+
+
 class SteckerWallboxTests(unittest.TestCase):
     def test_mystrom(self):
         srv, host = start_http({"/report": {"power": 1234.5, "relay": True, "Ws": 1200.0,

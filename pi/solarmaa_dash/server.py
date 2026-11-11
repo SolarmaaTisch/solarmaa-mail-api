@@ -55,6 +55,7 @@ class State:
         self.auth = auth
         self.rechnungen = rechnungen
         self.wartung = wartung
+        self.portal = None
         self.konfig = None           # KonfigWeb
         self.code_datei = None       # Einmal-Code für die Ersteinrichtung
         self.abregelung = None
@@ -313,6 +314,7 @@ def make_handler(state: State, app_dir: Path):
                                "preise": state.abregelung.preise.zeitreihe(jetzt - 3 * 3600, jetzt + 36 * 3600)}
                     return self._json({**state.wartung.status(), "abregelung": abr, "alarme": state.alarme.status(),
                                        "benutzer": state.auth.liste(),
+                                       "portal": state.portal.status() if state.portal else None,
                                        "einheiten": [{"id": e["id"], "name": e["name"]} for e in state.haus.einheiten]
                                        if state.haus else [],
                                        "geraete": state.geraete_status(),

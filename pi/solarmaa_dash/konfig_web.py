@@ -82,6 +82,8 @@ def pruefen(text: str) -> dict:
         from .abregelung import Abregelung
         from .preise import Preise
         Abregelung(probe, Preise(probe["abregelung"], None), store)
+    from .portal import Portal
+    Portal(probe)
     return cfg
 
 

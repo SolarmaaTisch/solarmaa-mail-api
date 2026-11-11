@@ -41,6 +41,8 @@ DEFAULTS: dict = {
     "abregelung": {"modus": "aus"},
     # Alarme: rote Lampe (Shelly/myStrom), Push (ntfy), E-Mail – siehe docs/11-abregelung.md
     "benachrichtigung": {},
+    # Solarmaa-Portal (siehe docs/13-portal.md)
+    "portal": {"url": "", "schluessel": "", "token": "", "intervall_s": 60},
     "server": {"host": "0.0.0.0", "port": 80, "app_pfad": ""},
     "daten": {"pfad": "/var/lib/solarmaa-dash/data.db", "aufbewahrung_tage": 800},
 }

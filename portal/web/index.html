@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Solarmaa Portal</title>
+<meta name="theme-color" content="#b279d7">
+<meta name="robots" content="noindex">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand"><span class="wordmark">solarmaa</span><span class="sub">Portal</span></div>
+    <nav class="top-nav">
+      <span class="muted small" id="who" hidden></span>
+      <button class="btn ghost" id="logout" hidden>Abmelden</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card narrow" id="vLogin" hidden>
+    <h1>Anmelden</h1>
+    <form id="fLogin" novalidate>
+      <label for="email">E-Mail</label>
+      <input id="email" type="email" autocomplete="username" inputmode="email" required>
+      <label for="pw">Passwort</label>
+      <input id="pw" type="password" autocomplete="current-password" required>
+      <p class="err" id="loginErr" role="alert" hidden></p>
+      <button class="btn primary" type="submit" id="loginBtn">Anmelden</button>
+    </form>
+    <button class="btn link" id="forgot" type="button">Passwort vergessen oder noch keines gesetzt?</button>
+    <p class="muted small" id="forgotMsg" hidden></p>
+  </section>
+
+  <section class="card narrow" id="vNewPw" hidden>
+    <h1>Passwort setzen</h1>
+    <p class="muted">Wählen Sie ein Passwort mit mindestens 10 Zeichen.</p>
+    <form id="fNewPw" novalidate>
+      <label for="npw">Neues Passwort</label>
+      <input id="npw" type="password" autocomplete="new-password" required minlength="10">
+      <p class="err" id="npwErr" role="alert" hidden></p>
+      <button class="btn primary" type="submit">Speichern</button>
+    </form>
+  </section>
+
+  <section id="vList" hidden>
+    <div class="head">
+      <h1>Anlagen</h1>
+      <button class="btn primary" id="addOpen" hidden>Anlage hinzufügen</button>
+    </div>
+    <div class="summary" id="summary"></div>
+    <form class="card" id="fAdd" hidden novalidate>
+      <h2>Neue Anlage</h2>
+      <div class="grid3">
+        <div><label for="aName">Name</label><input id="aName" required placeholder="MFH Musterstrasse 1"></div>
+        <div><label for="aOrt">Ort</label><input id="aOrt" placeholder="Biel"></div>
+        <div><label for="aKwp">Leistung kWp</label><input id="aKwp" inputmode="decimal" placeholder="10"></div>
+      </div>
+      <p class="err" id="addErr" role="alert" hidden></p>
+      <div class="row"><button class="btn primary" type="submit">Anlegen</button><button class="btn ghost" type="button" id="addCancel">Abbrechen</button></div>
+    </form>
+    <div class="card" id="tokenBox" hidden>
+      <h2>Anlage angelegt</h2>
+      <p>Diesen Block auf dem Pi unter Wartung → Konfiguration ans Ende einfügen. <b>Der Token wird nur jetzt angezeigt.</b></p>
+      <pre id="tokenText"></pre>
+      <div class="row"><button class="btn primary" id="tokenCopy">Kopieren</button><button class="btn ghost" id="tokenClose">Fertig</button></div>
+    </div>
+    <div class="plants" id="plants"></div>
+    <p class="muted" id="empty" hidden>Noch keine Anlage zugeordnet. Bitte bei Solarmaa melden.</p>
+  </section>
+
+  <section id="vPlant" hidden>
+    <button class="btn link" id="back">‹ Alle Anlagen</button>
+    <div class="head">
+      <div><h1 id="pName">–</h1><p class="muted" id="pMeta"></p></div>
+      <span class="pill" id="pState"></span>
+    </div>
+    <div class="banner warn" id="pAlarm" hidden></div>
+    <div class="banner info" id="pCurtail" hidden></div>
+    <div class="tiles" id="pNow"></div>
+    <h2>Heute</h2>
+    <div class="tiles" id="pToday"></div>
+    <h2>Tagesverlauf</h2>
+    <div class="legend"><span class="lg pv">Produktion</span><span class="lg home">Verbrauch</span></div>
+    <svg class="chart" id="chDay" role="img" aria-label="Tagesverlauf"></svg>
+    <h2>Letzte 30 Tage</h2>
+    <svg class="chart" id="chDays" role="img" aria-label="Letzte 30 Tage"></svg>
+    <div class="card" id="pAdmin" hidden>
+      <h2>Zugriff für Kunden</h2>
+      <ul class="list" id="members"></ul>
+      <form id="fMember" class="row" novalidate>
+        <input id="mEmail" type="email" placeholder="kunde@example.ch" aria-label="E-Mail des Kunden" required>
+        <button class="btn primary" type="submit">Zugriff geben</button>
+      </form>
+      <p class="muted small">Das Konto muss vorher in Supabase unter Authentication → Users eingeladen sein.</p>
+      <p class="err" id="memErr" role="alert" hidden></p>
+      <div class="row mt"><button class="btn ghost" id="tokenNew">Neuen Pi-Token erzeugen</button></div>
+    </div>
+  </section>
+</main>
+<script src="config.js"></script>
+<script src="portal.js"></script>
+</body>
+</html>

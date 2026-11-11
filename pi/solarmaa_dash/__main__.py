@@ -196,6 +196,11 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     if haus:
         threading.Thread(target=haus_loop, args=(state, stop), name="haus", daemon=True).start()
+    from .portal import Portal, portal_loop
+    state.portal = Portal(cfg)
+    if state.portal.aktiv:
+        threading.Thread(target=portal_loop, args=(state.portal, state, stop), name="portal", daemon=True).start()
+        log.info("Portal-Verbindung aktiv: %s", state.portal.url)
     hb = (cfg.get("benachrichtigung") or {}).get("lebenszeichen_url")
     if hb:
         threading.Thread(target=lebenszeichen_loop, args=(state, hb, stop), name="lebenszeichen", daemon=True).start()

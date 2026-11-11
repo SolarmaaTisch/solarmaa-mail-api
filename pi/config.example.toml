@@ -207,6 +207,12 @@ modus = "aus"                 # aus | simulation | test | auto
 # passwort = ""
 # empfaenger = ["service@solarmaa.ch"]
 
+# Solarmaa-Portal (siehe docs/13-portal.md). Den Block liefert das Portal beim Anlegen der Anlage.
+[portal]
+# url = "https://<projekt>.supabase.co"
+# schluessel = "sb_publishable_…"
+# token = ""
+
 [auswertung]
 # Optional. Nur ausfüllen, wenn die Werte für diesen Kunden bekannt sind
 # (Tarifblatt des Netzbetreibers). Leer = App zeigt keine Ersparnis / kein CO2.

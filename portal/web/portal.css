@@ -1,0 +1,70 @@
+/* Solarmaa Portal – gleiche Farben wie die App auf dem Pi */
+:root {
+  --violet: #b279d7; --orange: #ff6b00; --orange-soft: #ff8f3d; --anthrazit: #212325;
+  --bg: #ffffff; --surface: #f5f3f8; --ink: #212325; --muted: rgba(33, 35, 37, 0.62); --line: rgba(33, 35, 37, 0.12);
+  --c-pv: #ff6b00; --c-home: #9a5cc4; --c-grid: #5566b8; --c-bat: #5a9a2e; --ok: #3f8f2a; --warn: #c2410c; --red: #c62828;
+  --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161719; --surface: #212325; --ink: #f3f1f6; --muted: rgba(243, 241, 246, 0.64); --line: rgba(255, 255, 255, 0.12);
+    --c-home: #c99ae6; --c-grid: #9aa8e8; --c-bat: #a9d97c; --ok: #8fd16a; --warn: #ff8f3d; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--font); font-variant-numeric: tabular-nums; }
+h1 { font-size: 1.4rem; margin: 0; letter-spacing: -0.02em; }
+h2 { font-size: 1.02rem; margin: 26px 0 10px; }
+p { margin: 0 0 8px; }
+.muted { color: var(--muted); } .small { font-size: 0.82rem; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main.wrap { padding-block: 22px 48px; }
+.top { border-bottom: 1px solid var(--line); padding-top: env(safe-area-inset-top, 0px); }
+.top-inner { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 12px; flex-wrap: wrap; }
+.wordmark { font-weight: 800; font-size: 1.3rem; letter-spacing: -0.03em; color: var(--violet); }
+.sub { color: var(--muted); margin-left: 10px; }
+.top-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.card { background: var(--surface); border-radius: 18px; padding: 20px; margin-bottom: 18px; min-width: 0; }
+.card h2 { margin-top: 0; }
+.narrow { max-width: 400px; margin: 36px auto; }
+form { display: grid; gap: 8px; }
+label { font-size: 0.84rem; color: var(--muted); display: block; }
+input { width: 100%; font: inherit; font-size: 16px; min-height: 46px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.btn { font: inherit; font-weight: 600; min-height: 44px; padding: 8px 18px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; }
+.btn.primary { background: var(--violet); color: #fff; } .btn.primary:hover { background: var(--orange-soft); }
+.btn.ghost { background: var(--bg); border-color: var(--line); color: var(--ink); }
+.btn.link { background: none; color: var(--c-grid); padding-inline: 0; font-weight: 500; text-align: left; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.err { color: var(--red); font-size: 0.88rem; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .row input { flex: 1 1 200px; }
+.mt { margin-top: 12px; }
+.grid3 { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; padding: 4px 11px; border-radius: 999px; background: var(--surface); color: var(--muted); white-space: nowrap; }
+.pill.ok { color: var(--ok); } .pill.off { color: var(--muted); } .pill.bad { background: var(--red); color: #fff; } .pill.cur { background: var(--c-grid); color: #fff; }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.plants { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.plant { text-align: left; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 16px; cursor: pointer; display: grid; gap: 8px; min-height: 44px; }
+.plant:hover { border-color: var(--violet); }
+.plant .p-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.plant .p-name { font-weight: 700; overflow-wrap: anywhere; }
+.plant .p-val { display: flex; gap: 18px; flex-wrap: wrap; }
+.plant .p-val b { font-size: 1.3rem; letter-spacing: -0.02em; } .plant .p-val .pv b { color: var(--c-pv); }
+.plant .p-val span span { display: block; font-size: 0.74rem; color: var(--muted); }
+.tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.tile { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; border-left: 4px solid var(--line); }
+.tile span { display: block; font-size: 0.78rem; color: var(--muted); } .tile b { font-size: 1.45rem; letter-spacing: -0.02em; } .tile small { color: var(--muted); }
+.tile.pv { border-left-color: var(--c-pv); } .tile.home { border-left-color: var(--c-home); } .tile.grid { border-left-color: var(--c-grid); } .tile.bat { border-left-color: var(--c-bat); }
+.banner { border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-weight: 600; font-size: 0.9rem; }
+.banner.warn { background: var(--red); color: #fff; } .banner.info { background: var(--c-grid); color: #fff; }
+.chart { width: 100%; height: 230px; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; } .chart .g { stroke: var(--line); }
+.chart .pv-a { fill: rgba(255, 107, 0, 0.18); } .chart .pv-l { fill: none; stroke: var(--c-pv); stroke-width: 2; } .chart .ho-l { fill: none; stroke: var(--c-home); stroke-width: 2; }
+.chart .b-pv { fill: var(--c-pv); } .chart .b-ho { fill: var(--c-home); }
+.legend { display: flex; gap: 16px; font-size: 0.8rem; color: var(--muted); }
+.lg::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+.lg.pv::before { background: var(--c-pv); } .lg.home::before { background: var(--c-home); }
+.list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.list li { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 6px; overflow-wrap: anywhere; }
+pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow: auto; font-size: 0.8rem; }
+#pAdmin { margin-top: 26px; }

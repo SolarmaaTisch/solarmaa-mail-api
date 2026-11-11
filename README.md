@@ -19,6 +19,7 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 | [Wechselrichter und Modbus TCP](docs/08-wechselrichter-modbus-tcp.md) | Was jede Marke über Modbus TCP liefert, Ports, Stolpersteine, wann RS485 |
 | [Evolium-Speicher](docs/09-evolium.md) | Anzeige über Shelly-Messung, geschätzter Ladezustand, Anfrage an Evolium |
 | [Stecker, Wallboxen, whatwatt](docs/10-stecker-und-wallboxen.md) | myStrom, go-e, Easee, whatwatt Go |
+| [Portal](docs/13-portal.md) | Solarmaa-Portal im Internet (Supabase + Vercel): Einrichtung, Sicherheit, Ablauf |
 | [Sicherheit und Fernzugriff](docs/12-sicherheit-und-fernzugriff.md) | Erreichbarkeit von aussen, Prüfbefunde, offene Entscheide |
 | [Abregelung bei negativen Preisen](docs/11-abregelung.md) | Day-Ahead (ENTSO-E), Nulleinspeisung, Feldtest PIKO CI |
 
@@ -62,5 +63,6 @@ pi/solarmaa_dash/    Python-Dienst: Modbus/SunSpec, Speicherung, Webserver
 pi/install.sh        Installation als systemd-Dienst
 pi/config.example.toml
 docs/                Konzept, Bauplan, Einbau, Inbetriebnahme
+portal/              Solarmaa-Portal: Datenbankstruktur (supabase/) und Webseite (web/)
 tests/               python3 -m unittest discover -s tests
 ```
