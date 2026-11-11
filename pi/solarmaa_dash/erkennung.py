@@ -54,12 +54,17 @@ def _hostname(host: str) -> str:
         return ""
 
 
-def port_offen(host: str, port: int, timeout: float = 0.6) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+def port_offen(host: str, port: int, timeout: float = 1.5, versuche: int = 2) -> bool:
+    """WLAN-Geräte (Shelly, myStrom) antworten im Stromsparmodus oft erst nach über einer Sekunde."""
+    for _ in range(versuche):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except ConnectionRefusedError:
+            return False          # Gerät da, Port zu: kein zweiter Versuch nötig
+        except OSError:
+            continue
+    return False
 
 
 def regs_text(regs: list[int]) -> str:
@@ -116,7 +121,7 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
     funde: list[dict] = []
     if port_offen(host, 80):
         try:
-            j = get_json(f"http://{host}/shelly", timeout=2)
+            j = get_json(f"http://{host}/shelly", timeout=4)
             if isinstance(j, dict) and ("gen" in j or "type" in j):
                 gen = int(j.get("gen", 1) or 1)
                 modell = j.get("model") or j.get("type") or "?"
@@ -194,13 +199,15 @@ def pruefe_host(host: str, profile: list) -> list[dict]:
 
 
 def suchen(netz: str | None = None, smartme_cfg: dict | None = None, fortschritt=None) -> list[dict]:
+    if netz and "/" not in netz:
+        netz = f"{netz}/32"       # einzelne Adresse
     net = ipaddress.ip_network(netz, strict=False) if netz else eigenes_netz()
     if net.num_addresses > 1024:
         raise ValueError("Netz zu gross, höchstens /22")
-    hosts = [str(h) for h in net.hosts()]
+    hosts = [str(h) for h in net.hosts()] or [str(net.network_address)]
     profile = profile_mit_erkennung()
     funde: list[dict] = []
-    with ThreadPoolExecutor(max_workers=48) as ex:
+    with ThreadPoolExecutor(max_workers=64) as ex:
         for i, res in enumerate(ex.map(lambda h: pruefe_host(h, profile), hosts)):
             funde.extend(res)
             if fortschritt:
@@ -247,7 +254,11 @@ def als_toml(funde: list[dict]) -> str:
 
 def drucken(funde: list[dict]) -> None:
     if not funde:
-        print("Keine Geräte gefunden. Ist Modbus TCP am Wechselrichter aktiviert und der Pi im selben Netz?")
+        print("Keine Geräte gefunden. Mögliche Gründe:\n"
+              "  - Gerät hängt in einem anderen Netz (Gäste-WLAN, eigenes IoT-Netz, Repeater mit Trennung)\n"
+              "  - Modbus TCP am Wechselrichter bzw. lokale API (go-e) ist nicht aktiviert\n"
+              "  - Easee und smart-me laufen nur über die Cloud und werden nicht im Netz gefunden\n"
+              "Einzelnes Gerät prüfen:  python3 -m solarmaa_dash erkennen --host <IP-Adresse>")
         return
     print(f"{'Adresse':<16} {'Typ':<14} {'Rolle':<9} {'Gerät':<34} Hinweis")
     for f in funde:

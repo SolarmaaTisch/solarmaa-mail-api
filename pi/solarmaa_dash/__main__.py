@@ -277,8 +277,11 @@ def cmd_smartme(args) -> int:
 def cmd_erkennen(args) -> int:
     from . import erkennung
     cfg = load_cfg(args.config)
-    netz = args.netz or str(erkennung.eigenes_netz())
-    print(f"Suche Geräte in {netz} … (dauert etwa eine Minute)")
+    netz = args.host or args.netz or str(erkennung.eigenes_netz())
+    print(f"Suche Geräte in {netz} … " + ("" if args.host else "(dauert ein bis zwei Minuten)"))
+    if args.host:
+        for port in (80, 502, 1502):
+            print(f"  Port {port}: {'offen' if erkennung.port_offen(args.host, port) else 'keine Antwort'}")
 
     def fortschritt(i, n):
         if i % 32 == 0 or i == n:
@@ -404,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     with_cfg(sub.add_parser("alarm-test", help="Testmeldung an Lampe, Push und E-Mail"))
     er = with_cfg(sub.add_parser("erkennen", help="Geräte im Netz automatisch suchen"))
     er.add_argument("--netz", help="z. B. 192.168.1.0/24 (Standard: Netz des Pi)")
+    er.add_argument("--host", help="nur diese eine IP-Adresse prüfen, mit Diagnose")
     er.add_argument("--toml", help="Konfigurationsvorschlag in diese Datei schreiben")
     b = with_cfg(sub.add_parser("benutzer", help="Benutzer verwalten"), db=True)
     b.add_argument("aktion", choices=("add", "list", "del"))
