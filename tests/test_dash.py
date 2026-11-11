@@ -72,6 +72,7 @@ class FakeModbus(socketserver.ThreadingTCPServer):
 
     def __init__(self, units):
         self.units = units  # unit-id -> {addr: value}
+        self.writes = []
         super().__init__(("127.0.0.1", 0), FakeHandler)
 
 
@@ -83,6 +84,13 @@ class FakeHandler(socketserver.BaseRequestHandler):
                 return
             tid, _p, length, unit = struct.unpack(">HHHB", hdr)
             pdu = self.request.recv(length - 1)
+            if pdu[0] == 16:  # Write Multiple Registers: mitschneiden
+                _fc, addr, count, _bc = struct.unpack(">BHHB", pdu[:6])
+                werte = list(struct.unpack(f">{count}H", pdu[6:6 + 2 * count]))
+                getattr(self.server, "writes", []).append((unit, addr, werte))
+                resp = struct.pack(">BHH", 16, addr, count)
+                self.request.sendall(struct.pack(">HHHB", tid, 0, len(resp) + 1, unit) + resp)
+                continue
             fc, addr, count = struct.unpack(">BHH", pdu)
             regs = self.server.units.get(unit, {})
             if any(addr + i not in regs for i in range(count)):

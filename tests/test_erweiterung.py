@@ -146,6 +146,11 @@ class ShellyFroniusSmartMeTests(unittest.TestCase):
 class ProfilTests(unittest.TestCase):
     def test_alle_profile_gueltig(self):
         for p in (ROOT / "pi" / "solarmaa_dash" / "profile").glob("*.toml"):
+            import tomllib
+            if "steuerung" in tomllib.loads(p.read_text()) and "werte" not in tomllib.loads(p.read_text()):
+                from solarmaa_dash.abregelung import lade_steuerprofil
+                self.assertIn("limit_register", lade_steuerprofil(p.stem)["steuerung"])
+                continue
             if p.stem == "smartme_lokal":
                 with self.assertRaises(ValueError):
                     lade_profil(p.stem)

@@ -85,6 +85,35 @@ class ModbusTcpClient:
                 raise ModbusError("Antwort hat falsche Länge")
             return list(struct.unpack(f">{count}H", body[2 : 2 + byte_count]))
 
+    def write_registers(self, address: int, values: list[int]) -> None:
+        """Funktion 16 (Write Multiple Registers). Nur für die Abregelung verwendet."""
+        if not 1 <= len(values) <= 120:
+            raise ValueError("1 bis 120 Register")
+        with self._lock:
+            if self._sock is None:
+                try:
+                    self.connect()
+                except OSError as exc:
+                    raise ModbusError(f"Keine Verbindung zu {self.host}:{self.port} ({exc})") from exc
+            self._tid = (self._tid + 1) & 0xFFFF
+            n = len(values)
+            pdu = struct.pack(f">BHHB{n}H", 16, address, n, 2 * n, *[v & 0xFFFF for v in values])
+            mbap = struct.pack(">HHHB", self._tid, 0, len(pdu) + 1, self.unit)
+            try:
+                self._sock.sendall(mbap + pdu)
+                tid, _p, length, _u = struct.unpack(">HHHB", self._recv_exact(7))
+                body = self._recv_exact(length - 1)
+            except (OSError, ModbusError) as exc:
+                self.close()
+                raise ModbusError(f"Schreiben fehlgeschlagen ({exc})") from exc
+            if tid != self._tid:
+                self.close()
+                raise ModbusError("Antwort passt nicht zur Anfrage (Transaktions-ID)")
+            if body[0] == 0x90:
+                raise ModbusError(f"Gerät lehnt Schreiben ab (Exception {body[1]}) bei Register {address}")
+            if body[0] != 16:
+                raise ModbusError(f"Unerwarteter Funktionscode {body[0]}")
+
     def read_many(self, address: int, count: int) -> list[int]:
         """Liest auch mehr als 125 Register in mehreren Blöcken."""
         out: list[int] = []

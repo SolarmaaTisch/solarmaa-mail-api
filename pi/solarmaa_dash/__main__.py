@@ -61,6 +61,13 @@ def open_all(cfg: dict, db: str | None = None):
     return store, haus, auth, rechnungen
 
 
+def preis_loop(preise, stop: threading.Event) -> None:
+    while not stop.is_set():
+        if preise.braucht_update():
+            preise.aktualisieren()
+        stop.wait(300)
+
+
 def poll_loop(state: State, source, stop: threading.Event) -> None:
     interval = float(state.cfg["quelle"]["intervall_s"])
     backoff = interval
@@ -71,12 +78,16 @@ def poll_loop(state: State, source, stop: threading.Event) -> None:
             snap = source.read()
             state.store.add(snap)
             state.publish(snap)
+            if state.abregelung:
+                state.abregelung.tick(snap)
             backoff = interval
         except Exception as exc:  # Gerät kurz weg, Netzwerk, ...
             msg = str(exc) or exc.__class__.__name__
             if state.error != msg:
                 log.warning("Messwert konnte nicht gelesen werden: %s", msg)
             state.publish(None, msg)
+            if state.abregelung:
+                state.abregelung.tick(None)
             backoff = min(backoff * 2, 60.0)
         if t0 - last_prune > 6 * 3600:
             state.store.prune()
@@ -101,6 +112,13 @@ def cmd_run(args) -> int:
     source = make_source(cfg)
     from .wartung import Wartung
     state = State(cfg, store, source.name, source, haus, auth, rechnungen, Wartung(cfg))
+    if cfg["abregelung"].get("modus", "aus") != "aus":
+        from .abregelung import Abregelung
+        from .preise import Preise
+        daten_dir = None if cfg["daten"]["pfad"] == ":memory:" else Path(cfg["daten"]["pfad"]).parent
+        state.abregelung = Abregelung(cfg, Preise(cfg["abregelung"], daten_dir), store)
+        log.info("Abregelung aktiv im Modus «%s» für %d Wechselrichter", state.abregelung.modus,
+                 len(state.abregelung.wr))
     if haus and haus.demo:
         haus.demo_verlauf()
         rechnungen.demo_fuellen()
@@ -120,9 +138,13 @@ def cmd_run(args) -> int:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     if haus:
         threading.Thread(target=haus_loop, args=(state, stop), name="haus", daemon=True).start()
+    if state.abregelung:
+        threading.Thread(target=preis_loop, args=(state.abregelung.preise, stop), name="preise", daemon=True).start()
     try:
         poll_loop(state, source, stop)
     finally:
+        if state.abregelung:
+            state.abregelung.freigeben_alle()
         store.flush()
         httpd.shutdown()
         log.info("Beendet.")
@@ -221,6 +243,24 @@ def cmd_erkennen(args) -> int:
     return 0
 
 
+def cmd_preise(args) -> int:
+    from .preise import Preise
+    cfg = load_cfg(args.config)
+    p = Preise(cfg["abregelung"], None)
+    p.aktualisieren()
+    if p.fehler:
+        print(p.fehler, file=sys.stderr)
+        return 1
+    jetzt = time.time()
+    reihe = p.zeitreihe(jetzt - 3600, jetzt + 36 * 3600)
+    schwelle = float(cfg["abregelung"].get("schwelle", 0))
+    print(f"{len(reihe)} Preise (Schwelle {schwelle:g}):")
+    for z in reihe:
+        mark = "  ← abregeln" if z["preis"] < schwelle else ""
+        print(f"  {time.strftime('%d.%m. %H:%M', time.localtime(z['start']))}  {z['preis']:8.2f}{mark}")
+    return 0
+
+
 def cmd_benutzer(args) -> int:
     cfg = load_cfg(args.config)
     _store, haus, auth, _r = open_all(cfg, args.db)
@@ -289,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     with_cfg(sub.add_parser("read", help="einen Anlagen-Messwert lesen"))
     with_cfg(sub.add_parser("geraet-test", help="alle Geräte und Zähler einmal lesen"))
     with_cfg(sub.add_parser("smartme-liste", help="Zähler im smart-me-Konto anzeigen"))
+    with_cfg(sub.add_parser("preise", help="Day-Ahead-Preise abrufen und anzeigen"))
     er = with_cfg(sub.add_parser("erkennen", help="Geräte im Netz automatisch suchen"))
     er.add_argument("--netz", help="z. B. 192.168.1.0/24 (Standard: Netz des Pi)")
     er.add_argument("--toml", help="Konfigurationsvorschlag in diese Datei schreiben")
@@ -304,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     return {"run": cmd_run, "scan": cmd_scan, "read": cmd_read, "geraet-test": cmd_geraet_test,
-            "smartme-liste": cmd_smartme, "erkennen": cmd_erkennen, "benutzer": cmd_benutzer,
+            "smartme-liste": cmd_smartme, "erkennen": cmd_erkennen, "preise": cmd_preise, "benutzer": cmd_benutzer,
             "rechnungen-import": cmd_rechnungen}[args.cmd](args)
 
 

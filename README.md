@@ -5,6 +5,7 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 - Geräte: SunSpec (viele Hersteller), Fronius, Huawei, GoodWe, Sigenergy, Shelly, smart-me, whatwatt Go, myStrom, Wallboxen go-e und Easee; Erkennung automatisch
 - Mehrfamilienhaus/ZEV: Hausskizze mit anklickbaren Zählern, Login mit Rollen, Rechnungen aus smart-me
 - Wartung im Browser: Web-Update mit Testlauf, Gerätestatus
+- Abregelung bei negativen Day-Ahead-Preisen (Nulleinspeisung) mit Simulations- und Testmodus
 
 | Dokument | Inhalt |
 |---|---|
@@ -18,6 +19,7 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 | [Wechselrichter und Modbus TCP](docs/08-wechselrichter-modbus-tcp.md) | Was jede Marke über Modbus TCP liefert, Ports, Stolpersteine, wann RS485 |
 | [Evolium-Speicher](docs/09-evolium.md) | Anzeige über Shelly-Messung, geschätzter Ladezustand, Anfrage an Evolium |
 | [Stecker, Wallboxen, whatwatt](docs/10-stecker-und-wallboxen.md) | myStrom, go-e, Easee, whatwatt Go |
+| [Abregelung bei negativen Preisen](docs/11-abregelung.md) | Day-Ahead (ENTSO-E), Nulleinspeisung, Feldtest PIKO CI |
 
 ## Schnellstart (Demo auf dem eigenen Rechner)
 

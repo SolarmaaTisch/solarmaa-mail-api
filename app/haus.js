@@ -427,6 +427,39 @@
     $("devList").innerHTML = (w.geraete || []).map((g) => `<li><span><span class="${g.ok ? "dot-ok" : "dot-err"}"></span>${esc(g.name)}</span><span class="muted">${esc(g.rolle)} · ${esc(g.typ)}</span></li>`).join("") || '<li class="muted">Demo-Quelle, keine echten Geräte</li>';
     $("meterList").innerHTML = (w.haus_zaehler || []).map((z) => `<li><span><span class="${z.fehler ? "dot-err" : "dot-ok"}"></span>${esc(z.name)}</span><span class="muted">${z.fehler ? esc(z.fehler) : "ok"}</span></li>`).join("") || '<li class="muted">Keine Hauszähler eingerichtet</li>';
     renderScan(w.erkennung || {});
+    renderAbregelung(w.abregelung);
+  }
+
+  const MODUS = { aus: "aus", simulation: "Simulation", test: "Test", auto: "Automatik" };
+  function renderAbregelung(a) {
+    $("abrPanel").hidden = !a;
+    if (!a) return;
+    $("abrModus").textContent = MODUS[a.modus] || a.modus;
+    const zeit = (ts) => new Date(ts * 1000).toLocaleString(L, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    $("abrInfo").innerHTML = `<dt>Zustand</dt><dd>${a.aktiv ? `<b>abgeregelt</b>, ${esc(a.grund)}` : "normal"}</dd>
+      <dt>Preis jetzt</dt><dd>${a.preis == null ? "unbekannt" : nf1.format(a.preis) + " €/MWh"} (Schwelle ${nf1.format(a.schwelle)})</dd>
+      <dt>Grenze</dt><dd>${fmtW(a.grenze_w)} von ${fmtW(a.nenn_w)}</dd>
+      <dt>Nächster negativer Preis</dt><dd>${a.naechster_negativ ? zeit(a.naechster_negativ) : "keiner bekannt"}</dd>
+      ${a.preise_fehler ? `<dt>Preise</dt><dd class="form-error">${esc(a.preise_fehler)}</dd>` : ""}`;
+    $("abrWr").innerHTML = a.wechselrichter.map((w) => `<li><span><span class="${w.fehler ? "dot-err" : "dot-ok"}"></span>${esc(w.name)}</span><span class="muted">${w.fehler ? esc(w.fehler) : w.grenze_w == null ? "noch nicht gesetzt" : "Grenze " + fmtW(w.grenze_w)}</span></li>`).join("");
+    drawPrices(a.preise || [], a.schwelle);
+    $("abrLog").innerHTML = `<thead><tr><th>Zeit</th><th>Ereignis</th><th class="num">Preis</th><th class="num">Grenze</th><th class="num">Netz</th></tr></thead><tbody>${(a.protokoll || []).map((r) => `<tr><td>${zeit(r.ts)}</td><td>${esc(r.ereignis)}</td><td class="num">${r.preis == null ? "–" : nf1.format(r.preis)}</td><td class="num">${fmtW(r.grenze_w)}</td><td class="num">${fmtW(r.netz_w)}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">Noch keine Ereignisse</td></tr>'}</tbody>`;
+  }
+
+  function drawPrices(rows, schwelle) {
+    const svg = $("abrChart");
+    svg.replaceChildren();
+    const W = Math.max(280, svg.clientWidth || 600), H = 170, Lp = 40, R = 6, T = 10, B = 22;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    if (!rows.length) { svg.append(el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, "Noch keine Preise")); return; }
+    const t0 = rows[0].start, t1 = rows[rows.length - 1].ende;
+    const lo = Math.min(0, ...rows.map((r) => r.preis)), hi = Math.max(10, ...rows.map((r) => r.preis));
+    const x = (t) => Lp + ((t - t0) / (t1 - t0)) * (W - Lp - R), y = (v) => H - B - ((v - lo) / (hi - lo)) * (H - B - T);
+    [lo, 0, hi].forEach((v) => { svg.append(el("line", { x1: Lp, x2: W - R, y1: y(v), y2: y(v), class: "grid" })); svg.append(el("text", { x: Lp - 4, y: y(v) + 3, "text-anchor": "end" }, nf0.format(v))); });
+    rows.forEach((r) => svg.append(el("rect", { x: x(r.start), width: Math.max(1, x(r.ende) - x(r.start) - 0.5), y: Math.min(y(r.preis), y(0)), height: Math.max(1, Math.abs(y(r.preis) - y(0))), class: r.preis < schwelle ? "b-solar" : "b-grid" })));
+    const jetzt = Date.now() / 1000;
+    if (jetzt > t0 && jetzt < t1) svg.append(el("line", { x1: x(jetzt), x2: x(jetzt), y1: T, y2: H - B, class: "grid", "stroke-dasharray": "3 3" }));
+    for (let t = Math.ceil(t0 / 21600) * 21600; t < t1; t += 21600) svg.append(el("text", { x: x(t), y: H - 6, "text-anchor": "middle" }, new Date(t * 1000).toLocaleTimeString(L, { hour: "2-digit", minute: "2-digit" })));
   }
 
   function renderScan(s) {

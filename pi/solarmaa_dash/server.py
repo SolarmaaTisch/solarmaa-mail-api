@@ -53,6 +53,7 @@ class State:
         self.auth = auth
         self.rechnungen = rechnungen
         self.wartung = wartung
+        self.abregelung = None
         self.latest: Snapshot | None = None
         self.error: str | None = None
         self.last_ok: float | None = None
@@ -78,7 +79,14 @@ class State:
             "status": "fehler" if stale else "ok",
             "fehler": self.error if stale else None,
             "demo": self.source_name == "demo",
+            "abregelung": self.abregelung_kurz(),
         }
+
+    def abregelung_kurz(self) -> dict | None:
+        if self.abregelung is None:
+            return None
+        st = self.abregelung.status()
+        return {k: st[k] for k in ("modus", "aktiv", "grund", "preis", "naechster_negativ")}
 
     def geraete_status(self) -> list[dict]:
         if self.source is None or not hasattr(self.source, "geraete"):
@@ -270,7 +278,15 @@ def make_handler(state: State, app_dir: Path):
                     return self._json(state.auth.liste())
                 if url.path == "/api/wartung":
                     self._admin()
-                    return self._json({**state.wartung.status(), "geraete": state.geraete_status(),
+                    abr = None
+                    if state.abregelung:
+                        jetzt = time.time()
+                        with state.store.lock:
+                            protokoll = [dict(zip(("ts", "ereignis", "preis", "grenze_w", "netz_w"), r)) for r in
+                                         state.store.db.execute("SELECT * FROM abregel_log ORDER BY ts DESC LIMIT 50")]
+                        abr = {**state.abregelung.status(), "protokoll": protokoll,
+                               "preise": state.abregelung.preise.zeitreihe(jetzt - 3 * 3600, jetzt + 36 * 3600)}
+                    return self._json({**state.wartung.status(), "abregelung": abr, "geraete": state.geraete_status(),
                                        "geraete_fehler": getattr(state.source, "status", {}),
                                        "haus_zaehler": [{**state.haus.zaehler_info(z), "name": f'{state.haus.einheit(zz["einheit"])["name"]}: {zz["name"]}'}
                                                         for z, zz in state.haus.zaehler.items()] if state.haus else []})

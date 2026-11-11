@@ -37,6 +37,8 @@ DEFAULTS: dict = {
                 "cache_s": 30},
     "easee": {"benutzer": "", "passwort": "", "basis_url": "https://api.easee.com"},
     "haus": {"aktiv": False},
+    # Abregelung bei negativen Day-Ahead-Preisen (siehe docs/11-abregelung.md)
+    "abregelung": {"modus": "aus"},
     "server": {"host": "0.0.0.0", "port": 80, "app_pfad": ""},
     "daten": {"pfad": "/var/lib/solarmaa-dash/data.db", "aufbewahrung_tage": 800},
 }

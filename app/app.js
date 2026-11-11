@@ -209,8 +209,21 @@
     root.querySelector(".r-fg").style.strokeDashoffset = String(314.16 * (1 - (p ?? 0) / 100));
   }
 
+  function renderCurtail(a) {
+    const band = $("curtailBand");
+    if (!a || a.modus === "aus") { band.hidden = true; return; }
+    if (a.aktiv) {
+      const sim = a.modus === "simulation" ? " (Simulation, nichts geschaltet)" : "";
+      band.textContent = `Einspeisung abgeregelt: ${a.grund || "negativer Strompreis"}${sim}`;
+      band.hidden = false;
+    } else {
+      band.hidden = true;
+    }
+  }
+
   function renderNow(p) {
     lastMsg = Date.now();
+    renderCurtail(p.abregelung);
     const st = $("status");
     if (p.status === "ok") {
       st.dataset.state = "ok";

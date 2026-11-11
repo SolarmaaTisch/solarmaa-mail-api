@@ -1,0 +1,26 @@
+# Kostal PIKO CI 30 / 50 / 60 / 100 – Modbus TCP
+#
+# Register aus Auszügen der Kostal-Schnittstellenbeschreibung «PIKO CI Interface description
+# KOSTAL MODBUS (TCP) with control information» (gültig ab Firmware V3.17).
+# UNGEPRÜFT: Bei der ersten Anlage gegen das aktuelle Kostal-PDF für die installierte
+# Firmware prüfen, insbesondere Register, Datentyp, Wortfolge und die Bedeutung von
+# «External device» bei 0x30B3.
+#
+# Lesen (PV-Leistung) erfolgt bevorzugt über SunSpec (Erkennung findet das Modell).
+# Dieses Profil dient der Steuerung (Abregelung).
+
+name = "Kostal PIKO CI"
+geprueft = false
+rolle = "pv"
+funktion = 3
+wortfolge = "gross"
+
+[steuerung]
+# Leistungsbegrenzung durch externen Befehl freigeben:
+# 0x30B3 (12467) Power limit function: 0 = aus, 1 = External device, 3 = Digital Power Meter
+freigabe_register = 12467
+freigabe_wert = 1
+# 0x3085 (12421) Output power de-rating by Modbus command, W, U32, R/W
+limit_register = 12421
+limit_typ = "u32"
+limit_einheit = "W"

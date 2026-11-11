@@ -190,3 +190,4 @@ button { font: inherit; color: inherit; }
 .consumer b { font-weight: 650; }
 .consumer.off { color: var(--muted); }
 .t-sub { font-size: 0.78rem; color: var(--muted); }
+.curtail-band { background: var(--c-grid); color: #fff; text-align: center; font-size: 0.84rem; font-weight: 600; padding: 6px 16px; }
