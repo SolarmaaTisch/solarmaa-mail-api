@@ -7,6 +7,26 @@ LOGDIR=/var/log/solarmaa-dash   # gehört root: der Webdienst kann hier nichts u
 LOG=$LOGDIR/update.log
 install -d -m 755 -o root -g root "$LOGDIR"
 BRANCH=$(cat /etc/solarmaa-dash/update-branch 2>/dev/null || echo main)
+# Antwortet der Dienst nach dem Neustart? (jede HTTP-Antwort zählt, auch 503 bei Gerätefehler; bis 40 s)
+dienst_antwortet() {
+  python3 - <<'PY'
+import time, tomllib, urllib.error, urllib.request
+try:
+    port = tomllib.load(open("/etc/solarmaa-dash/config.toml", "rb")).get("server", {}).get("port", 80)
+except Exception:
+    port = 80
+for _ in range(20):
+    time.sleep(2)
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3)
+        raise SystemExit(0)
+    except urllib.error.HTTPError:
+        raise SystemExit(0)
+    except OSError:
+        pass
+raise SystemExit(1)
+PY
+}
 {
   echo "=== Update $(date '+%d.%m.%Y %H:%M:%S'), Branch $BRANCH ==="
   rm -f /var/lib/solarmaa-dash/update-anfrage
@@ -39,10 +59,16 @@ PY
     echo "FEHLER: Tests fehlgeschlagen, zurück auf $ALT"
     git -C "$SRC" checkout --quiet --force "$ALT"; exit 1
   fi
-  if "$SRC/pi/install.sh" --update; then
+  # Vorhandene Konfiguration mit dem neuen Programmstand laden (ohne Geräte); passt sie nicht, nicht umschalten
+  if grep -q "konfig-pruefen" "$SRC/pi/solarmaa_dash/__main__.py" && \
+     ! PRUEFUNG=$(cd "$SRC/pi" && runuser -u solarmaa-dash -- env PYTHONDONTWRITEBYTECODE=1 python3 -m solarmaa_dash konfig-pruefen -c /etc/solarmaa-dash/config.toml 2>&1); then
+    echo "FEHLER: Konfiguration passt nicht zur neuen Version: $(printf '%s' "$PRUEFUNG" | tail -n 1 | cut -c1-300). Alte Version $ALT bleibt."
+    git -C "$SRC" checkout --quiet --force "$ALT"; exit 1
+  fi
+  if "$SRC/pi/install.sh" --update && dienst_antwortet; then
     echo "OK: $ALT → $NEU installiert."
   else
-    echo "FEHLER bei der Installation, zurück auf $ALT"
+    echo "FEHLER bei der Installation oder der Dienst antwortet nach dem Neustart nicht, zurück auf $ALT"
     git -C "$SRC" checkout --quiet --force "$ALT" && "$SRC/pi/install.sh" --update && echo "Alte Version $ALT wiederhergestellt."
     exit 1
   fi

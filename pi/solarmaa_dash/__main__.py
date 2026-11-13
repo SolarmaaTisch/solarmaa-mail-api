@@ -2,6 +2,7 @@
 
   python -m solarmaa_dash run  [-c config.toml]         Dienst starten
   python -m solarmaa_dash geraet-test [-c config.toml]  alle Geräte und Zähler einmal lesen
+  python -m solarmaa_dash konfig-pruefen [-c config.toml]  Konfiguration prüfen (für update.sh)
   python -m solarmaa_dash erkennen [--toml vorschlag.toml]  Geräte im Netz automatisch finden
   python -m solarmaa_dash scan HOST [--unit N]          SunSpec-Modelle eines Geräts anzeigen
   python -m solarmaa_dash smartme-liste [-c ...]        alle Zähler im smart-me-Konto anzeigen
@@ -198,6 +199,26 @@ def _aufbauen(args):
     return cfg, store, haus, source, state, httpd
 
 
+def _konfigfehler(e: BaseException) -> bool:
+    """Fehler, die an der Konfiguration liegen (verständliche Meldung statt Traceback)."""
+    import tomllib
+    return isinstance(e, (ValueError, KeyError, TypeError, tomllib.TOMLDecodeError, FileNotFoundError))
+
+
+def cmd_konfig_pruefen(args) -> int:
+    """Lädt die Konfiguration mit diesem Programmstand und baut alle Teile probeweise auf, ohne Geräte
+    anzusprechen. Für update.sh: vor dem Umschalten auf eine neue Version. Exit 0 = passt."""
+    from .konfig_web import pruefen
+    pfad = args.config or DEFAULT_CONFIG
+    try:
+        pruefen(Path(pfad).read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 – jede Ursache melden, nie einen Traceback
+        print(f"{type(e).__name__}: {e}" if not isinstance(e, ValueError) else str(e), file=sys.stderr)
+        return 1
+    print("Konfiguration passt.")
+    return 0
+
+
 def cmd_run(args) -> int:
     try:
         cfg, store, haus, source, state, httpd = _aufbauen(args)
@@ -213,6 +234,9 @@ def cmd_run(args) -> int:
         daten_dir = Path(args.db).parent if args.db and args.db != ":memory:" else None
         if not belegt and ruecksetzen_falls_probe(cfg_pfad, e, daten_dir):
             return 1
+        if _konfigfehler(e):
+            log.error("Konfiguration ungültig, Dienst startet nicht: %s (Datei: %s)", e, cfg_pfad or "keine")
+            return 2
         raise
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -433,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=502)
     s.add_argument("--unit", type=int, default=1)
     with_cfg(sub.add_parser("read", help="einen Anlagen-Messwert lesen"))
+    with_cfg(sub.add_parser("konfig-pruefen", help="Konfiguration mit diesem Programmstand prüfen (ohne Geräte)"))
     with_cfg(sub.add_parser("geraet-test", help="alle Geräte und Zähler einmal lesen"))
     with_cfg(sub.add_parser("smartme-liste", help="Zähler im smart-me-Konto anzeigen"))
     with_cfg(sub.add_parser("preise", help="Day-Ahead-Preise abrufen und anzeigen"))
@@ -454,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(levelname)s %(message)s")
     return {"run": cmd_run, "scan": cmd_scan, "read": cmd_read, "geraet-test": cmd_geraet_test,
             "smartme-liste": cmd_smartme, "erkennen": cmd_erkennen, "preise": cmd_preise, "alarm-test": cmd_alarmtest, "benutzer": cmd_benutzer,
-            "rechnungen-import": cmd_rechnungen}[args.cmd](args)
+            "rechnungen-import": cmd_rechnungen, "konfig-pruefen": cmd_konfig_pruefen}[args.cmd](args)
 
 
 if __name__ == "__main__":

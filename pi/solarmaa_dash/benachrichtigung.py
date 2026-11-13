@@ -138,7 +138,7 @@ class Alarme:
         if self.push:
             try:
                 from .adressen import pruefe_url
-                server = pruefe_url(self.push.get("server", "https://ntfy.sh"), ("http", "https"),
+                server = pruefe_url(self.push.get("server") or "https://ntfy.sh", ("http", "https"),
                                     "benachrichtigung.push.server").rstrip("/")
                 hdr = {"Title": titel,
                        "Priority": {"kritisch": "5", "warnung": "4"}.get(stufe, "3"),

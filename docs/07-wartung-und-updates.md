@@ -40,7 +40,7 @@ Ab Version 1.6.0, ausführlich in [13-portal.md](13-portal.md), Kapitel «Fernwa
 1. `install.sh` legt eine Kopie des Git-Repositories unter `/opt/solarmaa-dash/src` an und merkt sich den Branch in `/etc/solarmaa-dash/update-branch`.
 2. Ein Klick auf «Update installieren» legt die Datei `/var/lib/solarmaa-dash/update-anfrage` an. Der Webdienst selbst hat keine Root-Rechte.
 3. systemd bemerkt die Datei (`solarmaa-dash-update.path`) und startet `/usr/local/sbin/solarmaa-update` als root.
-4. Das Skript holt den neuesten Stand, **führt die Tests aus** und installiert nur, wenn sie bestehen. Sonst bleibt die alte Version aktiv. Alles steht im Update-Protokoll (`/var/log/solarmaa-dash/update.log`). Während einer Abregelung wird kein Update gestartet. Schlägt die Installation fehl, wird die alte Version wiederhergestellt.
+4. Das Skript holt den neuesten Stand, **führt die Tests aus** und installiert nur, wenn sie bestehen. Danach lädt es die vorhandene Konfiguration mit dem neuen Programmstand (`python3 -m solarmaa_dash konfig-pruefen`, ohne Geräte anzusprechen); passt sie nicht, bleibt die alte Version und im Protokoll steht «FEHLER: Konfiguration passt nicht zur neuen Version: …». Nach dem Neustart wartet es bis 40 Sekunden, ob der Dienst antwortet, und kehrt sonst zur alten Version zurück. (Diese beiden Prüfungen greifen ab dem Update, das auf Version 1.6.0 folgt: Das Update auf 1.6.0 läuft noch mit dem bisherigen Skript.) Sonst bleibt die alte Version aktiv. Alles steht im Update-Protokoll (`/var/log/solarmaa-dash/update.log`). Während einer Abregelung wird kein Update gestartet. Schlägt die Installation fehl, wird die alte Version wiederhergestellt.
 
 Manuell per SSH: `sudo solarmaa-update`
 
@@ -79,6 +79,8 @@ Danach ist der Pi im Solarmaa-Tailnet unter `http://solarmaa-muster` erreichbar.
 
 | Problem | Prüfen |
 |---|---|
+| Update-Protokoll: «Konfiguration passt nicht zur neuen Version» | Grund steht dabei; Konfiguration vor Ort anpassen, dann Update erneut starten. Die alte Version läuft weiter |
+| Dienst startet nicht, im Journal «Konfiguration ungültig, Dienst startet nicht: …» | Konfiguration vor Ort korrigieren (`sudo nano /etc/solarmaa-dash/config.toml`), dann `sudo systemctl restart solarmaa-dash` |
 | «Web-Update nicht eingerichtet» | `install.sh` mit neuer Version erneut ausführen |
 | Update-Protokoll: «Repository nicht erreichbar» | Internet beim Kunden, Deploy-Key |
 | Update-Protokoll: «Tests fehlgeschlagen» | Alte Version läuft weiter. Fehler im Protokoll an die Entwicklung |

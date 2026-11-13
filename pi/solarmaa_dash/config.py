@@ -60,7 +60,8 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 def _adressen_pruefen(cfg: dict) -> None:
-    """Internet-Adressen der Konfiguration (lokal und aus der Ferne gleich). Leer = nicht benutzt."""
+    """Internet-Adressen der Konfiguration (lokal und aus der Ferne gleich). Leer oder false = nicht benutzt
+    (so galten diese Werte schon bisher, z. B. lebenszeichen_url = false)."""
     from .adressen import pruefe_url
     b = cfg.get("benachrichtigung") or {}
     push = b.get("push") if isinstance(b.get("push"), dict) else {}
@@ -69,8 +70,11 @@ def _adressen_pruefen(cfg: dict) -> None:
               ("benachrichtigung.push.server", push.get("server"), ("http", "https")),
               ("benachrichtigung.lebenszeichen_url", b.get("lebenszeichen_url"), ("http", "https"))]
     for was, url, schemata in felder:
-        if url is None or url == "":
+        if url is None or url is False or (isinstance(url, str) and not url.strip()):
             continue
+        if was.endswith("push.server") and isinstance(url, str) and "://" not in url:
+            # Der bisherige Code setzte kein Schema voran: Solche Werte haben nie eine Meldung zugestellt.
+            raise ValueError(f'{was} = "{url}": Adresse mit Schema angeben, z. B. "https://{url.strip("/")}"')
         pruefe_url(url, schemata, was)
 
 
