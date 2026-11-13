@@ -43,8 +43,11 @@
     sess = d ? { access: d.access_token, refresh: d.refresh_token, exp: Date.now() + (d.expires_in || 3600) * 1000, email: d.user?.email || sess?.email } : null;
     store.save(sess);
   }
+  // Aufruf gehört zu einer früheren Anmeldung (dazwischen abgemeldet): nicht senden, still abbrechen
+  const veraltet = () => Object.assign(new ApiError(0, "abgebrochen"), { veraltet: true });
   async function token() {
     if (!sess) throw new ApiError(401, "Bitte anmelden");
+    const eintritt = anm;
     if (Date.now() > sess.exp - 60000) {
       // Nur eine Erneuerung gleichzeitig; alle Aufrufer warten auf dieselbe. Wurde die Sitzung inzwischen
       // ersetzt (Abmelden, Zwei-Faktor bestätigt), wird das Ergebnis verworfen: Eine ältere Erneuerung
@@ -58,7 +61,10 @@
           if (nr === sessNr && a === anm && sess) setSess(d);
         })().finally(() => { erneuerung = null; });
       }
-      await erneuerung;
+      try { await erneuerung; }
+      catch (e) { if (eintritt !== anm) throw veraltet(); throw e; }
+      // Inzwischen abgemeldet (und evtl. jemand anders angemeldet): nie mit der neuen Sitzung senden
+      if (eintritt !== anm) throw veraltet();
       if (!sess) throw new ApiError(401, "Bitte anmelden");
     }
     return sess.access;
@@ -79,7 +85,7 @@
     if (view === "vPlant") timer = setInterval(() => loadPlant(current, false).catch(onErr), 30000);
     window.scrollTo(0, 0);
   }
-  function onErr(e) { if (e.status === 401) abmeldenLokal(); }
+  function onErr(e) { if (e.status === 401 && !e.veraltet) abmeldenLokal(); }
   const online = (p) => p.letzter_kontakt && (Date.now() - new Date(p.letzter_kontakt).getTime()) / 1000 < ONLINE_S;
   function statePill(p) {
     if (!p.letzter_kontakt) return '<span class="pill off">noch nie verbunden</span>';
@@ -93,6 +99,7 @@
     const m = marke, neu = await get(`anlagen?select=${COLS}&order=name`);
     if (m !== marke) return;
     plants = neu;
+    $("listErr").hidden = true;
     const on = plants.filter(online), bad = on.filter((p) => p.stoerung || p.status === "fehler");
     const pv = on.reduce((a, p) => a + (p.live?.pv_w || 0), 0);
     $("summary").innerHTML = plants.length > 1 ? `<span class="pill">${plants.length} Anlagen</span><span class="pill ok">${on.length} online</span>${plants.length - on.length ? `<span class="pill off">${plants.length - on.length} offline</span>` : ""}${bad.length ? `<span class="pill bad">${bad.length} mit Störung</span>` : ""}<span class="pill">Produktion jetzt ${fmtW(pv)}</span>` : "";
@@ -216,13 +223,19 @@
     }));
   }
   // Fehler einer Hintergrundabfrage: 401 meldet ab, sonst Meldung, sofern die Ansicht noch dieselbe ist
-  function fehlerBei(m, ziel, e) { onErr(e); if (e.status !== 401 && m === marke) showErr(ziel, e); }
+  function fehlerBei(m, ziel, e) { onErr(e); if (e.status !== 401 && !e.veraltet && m === marke) showErr(ziel, e); }
   function showErr(id, e) {
+    if (e && e.veraltet) return;
     const n = $(id);
     // Die Datenbank verlangt für heikle Aktionen eine Zwei-Faktor-Anmeldung: verständlich weiterleiten
     n.textContent = /Zwei-Faktor/i.test(e.message || "") ? "Dafür ist eine Zwei-Faktor-Anmeldung nötig. Bitte unten bei «Fernwartung» den Zwei-Faktor einrichten bzw. bestätigen und dann erneut versuchen." : e.message;
     n.hidden = false;
   }
+  const listeFehler = (a) => (e) => {
+    onErr(e);
+    if (e.status === 401 || e.veraltet || a !== anm) return;
+    showErr("listErr", new Error("Die Liste der Anlagen konnte nicht neu geladen werden und zeigt eventuell einen alten Stand. Der Token oben ist gültig."));
+  };
   function showToken(name, tok) {
     $("tokenText").textContent = `[portal]\nurl = "${URL_}"\nschluessel = "${KEY}"\ntoken = "${tok}"\n# Fernwartung durch Solarmaa (auf false setzen, wenn nicht vereinbart)\nfernwartung = true\n`;
     $("tokenBox").hidden = false; $("tokenBox").querySelector("h2").textContent = `Pi-Token für «${name}»`;
@@ -241,7 +254,7 @@
       if (a !== anm || !sess) return;                    // inzwischen abgemeldet: Token nicht mehr anzeigen
       current = null; if ($("vList").hidden) show("vList");
       $("fAdd").hidden = true; $("fAdd").reset(); showToken(name, r.token);
-      loadList().catch(onErr);                           // scheitert die Liste, bleibt der Token trotzdem stehen
+      loadList().catch(listeFehler(a));                  // scheitert die Liste, bleibt der Token trotzdem stehen
     } catch (e) { if (a === anm) showErr("addErr", e); onErr(e); }
   });
   $("tokenCopy").addEventListener("click", async () => {
@@ -261,7 +274,7 @@
     // andere Ansicht offen ist: Der alte Token gilt nicht mehr, ohne diesen wäre der Pi ausgesperrt.
     if (a !== anm || !sess) return;
     current = null; show("vList"); showToken(name, r.token);
-    loadList().catch(onErr);                             // scheitert die Liste, bleibt der Token trotzdem stehen
+    loadList().catch(listeFehler(a));                    // scheitert die Liste, bleibt der Token trotzdem stehen
   });
   $("fMember").addEventListener("submit", async (ev) => {
     ev.preventDefault(); $("memErr").hidden = true;
@@ -498,7 +511,7 @@
   function abmeldenLokal() {
     anm++;
     setSess(null); plants = []; current = null; admin = false; anlage = null;
-    ["plants", "members", "summary", "pNow", "pToday", "tokenText", "pName", "pMeta", "pAlarm", "pCurtail", "chDay", "chDays", "who", "memErr"].forEach((id) => { $(id).textContent = ""; });
+    ["plants", "members", "summary", "pNow", "pToday", "tokenText", "pName", "pMeta", "pAlarm", "pCurtail", "chDay", "chDays", "who", "memErr", "listErr"].forEach((id) => { $(id).textContent = ""; });
     $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true; $("fAdd").hidden = true;
     $("pAlarm").hidden = true; $("pCurtail").hidden = true;
     fernLeeren(); $("pFern").hidden = true;

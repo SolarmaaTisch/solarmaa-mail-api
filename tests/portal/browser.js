@@ -376,6 +376,14 @@ function piRunde(token, ordner = piDir) {
   await p.waitForSelector("#tokenBox:not([hidden])");
   const tok2 = ((await p.textContent("#tokenText")).match(/token = "([0-9a-f]+)"/) || [])[1] || "";
   ok("Liste nicht ladbar: der neue Token wird trotzdem angezeigt", tok2 && tokenPasst(tok2));
+  await p.waitForSelector("#listErr:not([hidden])");
+  ok("… mit Hinweis, dass die Liste nicht neu geladen wurde", /konnte nicht neu geladen werden/.test(await p.textContent("#listErr")));
+  await p.tap("#tokenClose");
+  await p.tap("#addOpen"); await p.fill("#aName", "Liste kaputt"); await p.tap("#fAdd button[type=submit]");
+  await p.waitForSelector("#tokenBox:not([hidden])");
+  const tok3 = ((await p.textContent("#tokenText")).match(/token = "([0-9a-f]+)"/) || [])[1] || "";
+  ok("Anlage hinzufügen bei kaputter Liste: Token angezeigt, Hinweis sichtbar", tok3.length >= 40 && (await p.isVisible("#listErr")));
+  sql("delete from public.anlagen where name = 'Liste kaputt'");
   await p.unroute(liste);
   ok("… und die Liste lieferte wirklich einen Fehler", antworten.some((a) => /^503 GET \/rest\/v1\/anlagen/.test(a)));
   antworten.splice(0, antworten.length, ...antworten.filter((a) => !/^503 /.test(a)));
@@ -424,6 +432,29 @@ function piRunde(token, ordner = piDir) {
   // (Die Knöpfe sind hier gesperrt, weil die Anlage nach dem Zeitsprung als offline gilt; massgebend ist die Stufe.)
   ok("… und die Seite zeigt Zwei-Faktor bestätigt", (await q.isVisible("#mfaOk")) && !/Zwei-Faktor/.test(await q.textContent("#fernHinweis")));
   await ctx2.close();
+
+  // ---------------------------------------------------------------- Abmelden während einer hängenden Erneuerung
+  const ctx3 = await browser.newContext({ ...devices["iPhone 13"] });
+  const w = await ctx3.newPage();
+  await w.clock.install();
+  await w.goto(URL_ + "/"); await w.waitForSelector("#vLogin:not([hidden])");
+  const wAnmelden = async (mail) => { await w.waitForSelector("#vLogin:not([hidden])"); await w.fill("#email", mail); await w.fill("#pw", PW); await w.tap("#loginBtn"); };
+  await wAnmelden("chef@solarmaa.ch");
+  await w.waitForSelector(".plant"); await w.tap(`.plant:has-text("${A}")`); await w.waitForSelector("#fMfa:not([hidden])");
+  await w.fill("#mfaCode", "424242"); await w.tap("#fMfa button[type=submit]"); await w.waitForSelector("#mfaOk:not([hidden])");
+  const gesendetW = [];
+  w.on("request", (r) => { if (/anlage_token_neu|befehl_anlegen|mitglied_setzen/.test(r.url())) gesendetW.push(`${r.url()} ${r.headers().authorization || ""}`); });
+  await w.route(/\/auth\/v1\/token\?grant_type=refresh_token/, async (route) => { await new Promise((res) => setTimeout(res, 3000)); await route.continue().catch(() => {}); });
+  await w.clock.fastForward("01:00:00");             // Sitzung gilt als abgelaufen: der nächste Aufruf erneuert (langsam)
+  const vorherW = hashA();
+  await w.tap("#tokenNew"); await w.tap("#tokenNew");  // «Neuer Pi-Token» wartet auf die Erneuerung
+  await w.tap("#logout");
+  await wAnmelden("kunde@example.ch"); await w.waitForSelector("#pNow .tile");
+  await w.waitForTimeout(4500);                      // die alte Erneuerung ist zurück
+  ok("nach Abmelden und neuer Anmeldung geht der alte Auftrag nicht hinaus", gesendetW.length === 0, JSON.stringify(gesendetW));
+  ok("… der Token der Anlage ist unverändert", hashA() === vorherW);
+  ok("… die neue Anmeldung bleibt bestehen", (await w.isVisible("#pNow")) && (await w.evaluate(() => !!localStorage.getItem("sm_portal"))));
+  await ctx3.close();
   await browser.close();
   fs.rmSync(piDir, { recursive: true, force: true });
 })().catch(async (e) => {
