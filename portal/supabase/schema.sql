@@ -1,4 +1,4 @@
--- Solarmaa-Portal, Stufe 1: Datenbankstruktur für Supabase (Postgres)
+-- Solarmaa-Portal (Stufen 1 und 3): Datenbankstruktur für Supabase (Postgres)
 -- Im Supabase-Dashboard unter «SQL Editor» einfügen und ausführen. Mehrfach ausführbar.
 --
 -- Sicherheitsmodell
@@ -57,6 +57,29 @@ create table if not exists public.tageswerte (
   primary key (anlage_id, tag)
 );
 
+-- Stufe 3: Fernwartung. Befehle vom Portal an den Pi und die (maskierte) Konfiguration des Pi.
+create table if not exists public.befehle (
+  id uuid primary key default gen_random_uuid(),
+  anlage_id uuid not null references public.anlagen (id) on delete cascade,
+  art text not null check (art in ('update', 'konfig')),
+  nutzlast jsonb,                       -- wird nach der Ausführung gelöscht
+  status text not null default 'offen' check (status in ('offen', 'gesendet', 'erledigt', 'fehler', 'verfallen')),
+  ergebnis text,
+  erstellt timestamptz not null default now(),
+  erstellt_von text not null default '',
+  gesendet_am timestamptz,
+  erledigt_am timestamptz
+);
+create index if not exists befehle_anlage on public.befehle (anlage_id, erstellt desc);
+
+create table if not exists public.anlagen_konfig (
+  anlage_id uuid primary key references public.anlagen (id) on delete cascade,
+  text text not null,                   -- Geheimnisse sind vom Pi durch ******** ersetzt
+  stand timestamptz not null default now()
+);
+
+alter table public.befehle enable row level security;
+alter table public.anlagen_konfig enable row level security;
 alter table public.admins enable row level security;
 alter table public.anlagen enable row level security;
 alter table public.mitglieder enable row level security;
@@ -75,7 +98,21 @@ language sql stable security definer set search_path = public as $$
       or exists (select 1 from public.mitglieder where anlage_id = a and user_id = auth.uid());
 $$;
 
+-- Zwei-Faktor: Sitzung wurde mit zweitem Faktor bestätigt (Supabase setzt aal = aal2 im Token)
+create or replace function public.hat_2fa() returns boolean
+language sql stable as $$
+  select coalesce(auth.jwt() ->> 'aal', '') = 'aal2';
+$$;
+
 -- ---------------------------------------------------------------- Leseregeln (RLS)
+drop policy if exists befehle_lesen on public.befehle;
+create policy befehle_lesen on public.befehle for select to authenticated
+  using (public.ist_admin());
+
+drop policy if exists konfig_lesen on public.anlagen_konfig;
+create policy konfig_lesen on public.anlagen_konfig for select to authenticated
+  using (public.ist_admin() and public.hat_2fa());
+
 drop policy if exists admins_lesen on public.admins;
 create policy admins_lesen on public.admins for select to authenticated
   using (user_id = auth.uid() or public.ist_admin());
@@ -98,7 +135,10 @@ create policy tageswerte_lesen on public.tageswerte for select to authenticated
 
 -- Rechte: nur lesen, und der Token-Hash ist für niemanden lesbar.
 revoke all on public.admins, public.anlagen, public.mitglieder, public.messwerte, public.tageswerte from anon, authenticated;
-grant select on public.admins, public.mitglieder, public.messwerte, public.tageswerte to authenticated;
+revoke all on public.befehle, public.anlagen_konfig from anon, authenticated;
+grant select on public.admins, public.mitglieder, public.messwerte, public.tageswerte, public.anlagen_konfig to authenticated;
+-- Befehle: alles ausser der Nutzlast (kann neue Passwörter enthalten)
+grant select (id, anlage_id, art, status, ergebnis, erstellt, erstellt_von, gesendet_am, erledigt_am) on public.befehle to authenticated;
 grant select (id, name, ort, kwp, erstellt, letzter_kontakt, version, live, heute, status, stoerung, abregelung, alarme)
   on public.anlagen to authenticated;
 
@@ -111,6 +151,7 @@ declare
   h jsonb := p_daten -> 'heute';
   slot timestamptz := to_timestamp(floor(extract(epoch from now()) / 300) * 300);
   v_tag date;
+  v_befehle jsonb;
 begin
   if p_token is null or length(p_token) < 20 or pg_column_size(p_daten) > 60000 then
     raise exception 'ungueltig' using errcode = '22023';
@@ -156,7 +197,17 @@ begin
       pv_wh = excluded.pv_wh, load_wh = excluded.load_wh, import_wh = excluded.import_wh,
       export_wh = excluded.export_wh, ev_wh = excluded.ev_wh;
   end if;
-  return jsonb_build_object('ok', true);
+  -- Fernwartung: offene Befehle mitgeben (höchstens eine Stunde alt), als «gesendet» markieren
+  update public.befehle set status = 'verfallen'
+   where anlage_id = a_id and status = 'offen' and erstellt < now() - interval '1 hour';
+  with b as (
+    update public.befehle set status = 'gesendet', gesendet_am = now()
+     where anlage_id = a_id and status = 'offen'
+    returning id, art, nutzlast, erstellt
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'art', art, 'nutzlast', nutzlast) order by erstellt), '[]'::jsonb)
+    into v_befehle from b;
+  return jsonb_build_object('ok', true, 'befehle', v_befehle);
 end;
 $$;
 
@@ -214,6 +265,53 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------- Fernwartung
+-- Nur Solarmaa-Konten MIT Zwei-Faktor-Anmeldung dürfen Befehle an einen Pi schicken.
+create or replace function public.befehl_anlegen(p_anlage uuid, p_art text, p_nutzlast jsonb default null)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare neu uuid; mail text;
+begin
+  if not public.ist_admin() then raise exception 'nur fuer Solarmaa' using errcode = '42501'; end if;
+  if not public.hat_2fa() then raise exception 'Zwei-Faktor-Anmeldung noetig' using errcode = '42501'; end if;
+  if p_art not in ('update', 'konfig') then raise exception 'unbekannter Befehl' using errcode = '22023'; end if;
+  if p_art = 'konfig' and (p_nutzlast ->> 'text') is null then raise exception 'Konfiguration fehlt' using errcode = '22023'; end if;
+  if pg_column_size(p_nutzlast) > 250000 then raise exception 'zu gross' using errcode = '22023'; end if;
+  if not exists (select 1 from public.anlagen where id = p_anlage) then raise exception 'Anlage nicht gefunden' using errcode = '02000'; end if;
+  select email into mail from auth.users where id = auth.uid();
+  -- ein noch nicht abgeholter Befehl derselben Art wird ersetzt
+  update public.befehle set status = 'verfallen', nutzlast = null
+   where anlage_id = p_anlage and art = p_art and status = 'offen';
+  insert into public.befehle (anlage_id, art, nutzlast, erstellt_von)
+  values (p_anlage, p_art, p_nutzlast, coalesce(mail, '')) returning id into neu;
+  return neu;
+end;
+$$;
+
+create or replace function public.pi_ergebnis(p_token text, p_befehl uuid, p_ok boolean, p_text text default '')
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare a_id uuid;
+begin
+  select id into a_id from public.anlagen where token_hash = encode(digest(coalesce(p_token, ''), 'sha256'), 'hex');
+  if a_id is null then raise exception 'unbekannte Anlage' using errcode = '28000'; end if;
+  update public.befehle
+     set status = case when p_ok then 'erledigt' else 'fehler' end, ergebnis = left(coalesce(p_text, ''), 2000),
+         erledigt_am = now(), nutzlast = null
+   where id = p_befehl and anlage_id = a_id and status = 'gesendet';
+end;
+$$;
+
+create or replace function public.pi_konfig(p_token text, p_text text)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare a_id uuid;
+begin
+  if length(coalesce(p_text, '')) > 200000 then raise exception 'zu gross' using errcode = '22023'; end if;
+  select id into a_id from public.anlagen where token_hash = encode(digest(coalesce(p_token, ''), 'sha256'), 'hex');
+  if a_id is null then raise exception 'unbekannte Anlage' using errcode = '28000'; end if;
+  insert into public.anlagen_konfig (anlage_id, text) values (a_id, p_text)
+  on conflict (anlage_id) do update set text = excluded.text, stand = now();
+end;
+$$;
+
 -- Alte 5-Minuten-Werte aufräumen (Tageswerte bleiben). Bei Bedarf als Cron-Job einrichten.
 create or replace function public.aufraeumen(p_tage int default 400)
 returns void language sql security definer set search_path = public as $$
@@ -223,8 +321,12 @@ $$;
 -- Ausführrechte: Standard ist «jeder» – zuerst alles entziehen, dann gezielt vergeben.
 revoke execute on function public.pi_melden(text, jsonb), public.anlage_anlegen(text, text, numeric),
   public.anlage_token_neu(uuid), public.anlage_loeschen(uuid), public.mitglied_setzen(uuid, text, boolean),
-  public.aufraeumen(int), public.ist_admin(), public.darf_anlage(uuid) from public, anon, authenticated;
-grant execute on function public.pi_melden(text, jsonb) to anon, authenticated;
+  public.aufraeumen(int), public.ist_admin(), public.darf_anlage(uuid), public.hat_2fa(),
+  public.befehl_anlegen(uuid, text, jsonb), public.pi_ergebnis(text, uuid, boolean, text), public.pi_konfig(text, text)
+  from public, anon, authenticated;
+grant execute on function public.pi_melden(text, jsonb), public.pi_ergebnis(text, uuid, boolean, text),
+  public.pi_konfig(text, text) to anon, authenticated;
+grant execute on function public.hat_2fa(), public.befehl_anlegen(uuid, text, jsonb) to authenticated;
 grant execute on function public.ist_admin(), public.darf_anlage(uuid), public.anlage_anlegen(text, text, numeric),
   public.anlage_token_neu(uuid), public.anlage_loeschen(uuid), public.mitglied_setzen(uuid, text, boolean)
   to authenticated;
