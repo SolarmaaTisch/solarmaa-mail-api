@@ -85,6 +85,11 @@ class EaseeKonto:
 
 
 def konto(cfg_easee: dict) -> EaseeKonto:
+    from ..adressen import pruefe_url
+    try:
+        pruefe_url(cfg_easee.get("basis_url", BASIS), ("https",), "easee.basis_url", lokal_http=True)
+    except ValueError as e:
+        raise GeraetFehler(str(e)) from None
     key = (cfg_easee.get("benutzer"), cfg_easee.get("basis_url", BASIS))
     with _LOCK:
         if key not in _KONTEN:

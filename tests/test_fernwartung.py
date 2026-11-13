@@ -751,10 +751,10 @@ class AdressenTests(unittest.TestCase):
         self.geheim = self.d / "geheim.json"
         self.geheim.write_text('{"Devices": [{"Id": "lokal"}], "passwort": "' + PASSWORT + '"}')
 
-    def _laden(self, toml: str):
+    def _laden(self, toml: str, streng: bool = True):
         pfad = self.d / "c.toml"
         pfad.write_text(toml, encoding="utf-8")
-        return config.load(pfad)
+        return config.load(pfad, streng=streng)
 
     def test_konfiguration_lehnt_fremde_schemata_ab(self):
         datei = self.geheim.as_uri()
@@ -764,8 +764,14 @@ class AdressenTests(unittest.TestCase):
                                      ("[benachrichtigung]", "lebenszeichen_url", ["https://hc-ping.com/abc", "http://192.0.2.4/ping"])):
             for schlecht in (datei, f"{datei}#/Devices", "ftp://192.0.2.1/x", "https://", "http:///etc/passwd", "gopher://x",
                              "api.smart-me.com", "HTTPS"):
-                with self.assertRaisesRegex(ValueError, feld, msg=f"{abschnitt} {feld} = {schlecht}"):
+                with self.assertRaisesRegex(ValueError, feld, msg=f"{abschnitt} {feld} = {schlecht}") as cm:
                     self._laden(f'{abschnitt}\n{feld} = "{schlecht}"\n')
+                if len(schlecht) > 6:
+                    self.assertNotIn(schlecht, str(cm.exception))                     # Wert wird nie wiedergegeben
+                # eine bestehende Datei mit diesem Wert startet trotzdem, mit Warnung
+                cfg = self._laden(f'{abschnitt}\n{feld} = "{schlecht}"\n', streng=False)
+                self.assertTrue(any(feld in w for w in cfg["_warnungen"]))
+                self.assertFalse(any(len(schlecht) > 6 and schlecht in w for w in cfg["_warnungen"]))
             for ok in gut:
                 self._laden(f'{abschnitt}\n{feld} = "{ok}"\n')
             self._laden(f'{abschnitt}\n{feld} = ""\n')                     # leer = nicht benutzt
@@ -839,11 +845,44 @@ class StartUndUpdateTests(unittest.TestCase):
         for text in ('[benachrichtigung]\nlebenszeichen_url = false\n', '[benachrichtigung]\nlebenszeichen_url = ""\n',
                      '[benachrichtigung.push]\nserver = ""\nthema = "t"\n', '[benachrichtigung.push]\nserver = false\n',
                      '[smartme]\nbasis_url = ""\n', '[easee]\nbasis_url = "  "\n'):
-            config.load(self._datei(text))
-        with self.assertRaisesRegex(ValueError, r'push.server = "ntfy.sh": Adresse mit Schema angeben, z. B. "https://ntfy.sh"'):
-            config.load(self._datei('[benachrichtigung.push]\nserver = "ntfy.sh"\nthema = "t"\n'))
+            self.assertNotIn("_warnungen", config.load(self._datei(text), streng=True))
+        ntfy = '[benachrichtigung]\nlebenszeichen_url = "hc-ping.com/abc-geheim"\n[benachrichtigung.push]\nserver = "ntfy.sh"\nthema = "t"\n'
+        with self.assertRaisesRegex(ValueError, "push.server: Adresse ohne Schema, bitte https:// voranstellen") as cm:
+            config.load(self._datei(ntfy), streng=True)                           # Speichern: abgelehnt
+        self.assertNotIn("ntfy.sh", str(cm.exception))
+        cfg = config.load(self._datei(ntfy))                                      # Start: kein Abbruch
+        self.assertEqual(cfg["benachrichtigung"]["push"], {})                      # Push aus, nicht an ntfy.sh
+        self.assertIsNone(cfg["benachrichtigung"]["lebenszeichen_url"])
+        self.assertEqual(len(cfg["_warnungen"]), 2)
+        self.assertNotIn("ntfy.sh", " ".join(cfg["_warnungen"]))
+        self.assertNotIn("abc-geheim", " ".join(cfg["_warnungen"]))
         with self.assertRaisesRegex(ValueError, "lebenszeichen_url"):
-            config.load(self._datei('[benachrichtigung]\nlebenszeichen_url = true\n'))
+            config.load(self._datei('[benachrichtigung]\nlebenszeichen_url = true\n'), streng=True)
+
+    def test_warnung_wird_beim_start_alarm(self):
+        from solarmaa_dash import __main__ as hauptprogramm
+        d = Path(tempfile.mkdtemp())
+        pfad = self._datei('[benachrichtigung.push]\nserver = "ntfy.sh"\nthema = "t"\n'
+                           f'[smartme]\nbasis_url = "http://smartme.example"\n[daten]\npfad = "{d}/data.db"\n')
+        args = types.SimpleNamespace(config=str(pfad), db=None, port=0)
+        with mock.patch.object(hauptprogramm, "serve"), mock.patch.object(hauptprogramm, "find_app_dir"), \
+                self.assertLogs("solarmaa_dash", level=logging.WARNING) as logs:
+            cfg, _store, _haus, _source, state, _httpd = hauptprogramm._aufbauen(args)
+        offen = state.alarme.status()["offen"]
+        self.assertEqual([a["key"] for a in offen], ["konfiguration"])
+        self.assertIn("push.server", offen[0]["text"])
+        self.assertIn("smartme.basis_url muss mit https:// beginnen", offen[0]["text"])
+        self.assertNotIn("ntfy.sh", offen[0]["text"])
+        self.assertTrue(any("Konfiguration:" in z for z in logs.output))
+        self.assertTrue(any(a.get("text") == offen[0]["text"] for a in state.alarme.status()["offen"]))  # geht so ans Portal
+        # smart-me mit http:// meldet beim Lesen einen Gerätefehler statt den Start abzubrechen
+        from solarmaa_dash.geraete import GeraetFehler
+        from solarmaa_dash.geraete.smartme import konto
+        with self.assertRaisesRegex(GeraetFehler, "smartme.basis_url muss mit https://"):
+            konto(cfg["smartme"])
+        from solarmaa_dash.geraete.easee import konto as easee_konto
+        with self.assertRaisesRegex(GeraetFehler, "easee.basis_url muss mit https://"):
+            easee_konto({"benutzer": "a", "passwort": "b", "basis_url": "http://easee.example"})
 
     def test_push_ohne_server_nimmt_standard(self):
         from solarmaa_dash.benachrichtigung import Alarme
@@ -853,25 +892,63 @@ class StartUndUpdateTests(unittest.TestCase):
         self.assertEqual(u.call_args[0][0].full_url, "https://ntfy.sh/t")
 
     def test_start_mit_ungueltiger_konfiguration_ohne_traceback(self):
-        pfad = self._datei('[smartme]\nbasis_url = "file:///etc/passwd"\n[daten]\npfad = ":memory:"\n')
+        pfad = self._datei('[quelle]\ntyp = "gibtsnicht"\n[daten]\npfad = ":memory:"\n')
         r = self._aufruf("run", "-c", str(pfad), "--port", "0")
         self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("Konfiguration ungültig, Dienst startet nicht: smartme.basis_url muss mit https:// beginnen", r.stderr)
+        self.assertIn("Konfiguration ungültig, Dienst startet nicht: quelle.typ muss", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         r = self._aufruf("run", "-c", str(self._datei("das ist [kein toml")), "--port", "0")
         self.assertEqual(r.returncode, 2)
         self.assertNotIn("Traceback", r.stderr)
 
+    def test_unerwarteter_fehler_mit_traceback_aber_ohne_abbruchkaskade(self):
+        """T-1: KeyError/TypeError sind kein «reiner Konfigurationsfehler»: Traceback ins Journal, Exit 2."""
+        from solarmaa_dash import __main__ as hauptprogramm
+        pfad = self._datei('[anlage]\nname = "X"\n[daten]\npfad = ":memory:"\n')
+        args = types.SimpleNamespace(config=str(pfad), db=None, port=0)
+        for fehler in (KeyError("rolle"), TypeError("float() argument must be a string")):
+            with mock.patch.object(hauptprogramm, "_aufbauen", side_effect=fehler), \
+                    self.assertLogs("solarmaa_dash", level=logging.ERROR) as logs:
+                self.assertEqual(hauptprogramm.cmd_run(args), 2)
+            text = "\n".join(logs.output)
+            self.assertIn("unerwarteter Fehler " + type(fehler).__name__, text)
+            self.assertIn("Traceback", text)
+            self.assertNotIn("Konfiguration ungültig", text)
+
     def test_konfig_pruefen(self):
         r = self._aufruf("konfig-pruefen", "-c", str(self._datei('[anlage]\nname = "X"\n[smartme]\napi_key = "geheim-123"\n')))
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "Konfiguration passt."))
+        # was der Dienst beim Start nur als Warnung meldet, blockiert das Update nicht
         r = self._aufruf("konfig-pruefen", "-c", str(self._datei('[benachrichtigung.push]\nserver = "ntfy.sh"\nthema = "geheim"\n')))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self._aufruf("konfig-pruefen", "-c", str(self._datei('[quelle]\ntyp = "gibtsnicht"\n')))
         self.assertEqual(r.returncode, 1)
-        self.assertIn("Adresse mit Schema angeben", r.stderr)
+        self.assertIn("quelle.typ muss", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         r = self._aufruf("konfig-pruefen", "-c", "/gibt/es/nicht.toml")
         self.assertEqual(r.returncode, 1)
         self.assertNotIn("Traceback", r.stderr)
+
+    def test_konfig_pruefen_gibt_eine_druckbare_zeile_aus(self):
+        """T-2: Steuerzeichen und Zeilenumbrüche aus der Meldung gelangen nicht ins Update-Protokoll."""
+        import contextlib
+        import io
+        from solarmaa_dash import __main__ as hauptprogramm
+        err = io.StringIO()
+        with mock.patch("solarmaa_dash.konfig_web.pruefen", side_effect=ValueError("a\x85b\nOK: x\u2028y\x1b[31mz\rq")), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(hauptprogramm.cmd_konfig_pruefen(types.SimpleNamespace(config=str(self._datei("")))), 1)
+        ausgabe = err.getvalue()
+        self.assertEqual(ausgabe.count("\n"), 1)
+        self.assertTrue(ausgabe.rstrip("\n").isprintable(), repr(ausgabe))
+        # und update_ergebnis teilt nur an \n: ein \x85 o. ä. im Protokoll erzeugt keine eigene «OK:»-Zeile
+        log = Path(tempfile.mkdtemp()) / "update.log"
+        log.write_text(f"=== Update {time.strftime('%d.%m.%Y %H:%M:%S')}, Branch stabil ===\n"
+                       "FEHLER: Konfiguration passt nicht zur neuen Version: a\x85OK: alles gut\u2028OK: x\n", encoding="utf-8")
+        with mock.patch.object(wartung, "UPDATE_LOG", log):
+            ok, text = wartung.Wartung(config.load(None), log.parent).update_ergebnis(time.time() - 60)
+        self.assertFalse(ok)
+        self.assertTrue(text.startswith("FEHLER: Konfiguration passt nicht"))
 
     def test_update_sh_prueft_vor_dem_umschalten(self):
         """update.sh selbst braucht root und feste Pfade (/opt, /etc, /var/log); geprüft wird hier, dass die
@@ -895,23 +972,57 @@ class StartUndUpdateTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("passt nicht zur neuen Version", text)
 
-    def test_dienst_antwortet_im_update_sh(self):
-        """Der eingebettete Python-Teil von dienst_antwortet() gegen eine HTTP-Attrappe (Port umgebogen)."""
+    def _update_sh_python(self, kennung: str) -> str:
+        """Ein eingebetteter Python-Teil aus update.sh, mit Konfigurationspfad auf eine Testdatei umgebogen."""
         import re
-        import subprocess
         skript = (self.PI / "update.sh").read_text(encoding="utf-8")
-        teil = re.search(r"dienst_antwortet\(\) \{\n  python3 - <<'PY'\n(.*?)\nPY\n\}", skript, re.S).group(1)
-        srv, host = start_http({"/api/health": {"status": "ok"}})
+        teile = re.findall(r"python3 - <<'PY'\n(.*?)\nPY\n", skript, re.S)
+        teil = next(t for t in teile if kennung in t)
+        self.assertEqual(teil.count('open("/etc/solarmaa-dash/config.toml", "rb")'), 1)
+        return teil.replace("time.sleep(2)", "time.sleep(0.05)")
+
+    def _attrappe(self, host: str, routes: dict):
+        from test_erweiterung import FakeHttpHandler
+        from http.server import ThreadingHTTPServer
+        import threading
+        srv = ThreadingHTTPServer((host, 0), FakeHttpHandler)
+        srv.daemon_threads = True
+        srv.routes, srv.need_key, srv.posts, srv.gets = routes, None, [], 0
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(lambda: (srv.shutdown(), srv.server_close()))
-        port = host.split(":")[1]
-        lauf = lambda t: subprocess.run([sys.executable, "-c", t], timeout=120).returncode  # noqa: E731
-        ersetzt = teil.replace('open("/etc/solarmaa-dash/config.toml", "rb")', "open('/gibt/es/nicht', 'rb')") \
-            .replace("port = 80", f"port = {port}").replace("time.sleep(2)", "time.sleep(0.05)")
-        self.assertEqual(lauf(ersetzt), 0)                                        # antwortet
+        return srv
+
+    def _lauf(self, teil: str, server_toml: str) -> int:
+        import subprocess
+        pfad = self._datei(server_toml)
+        return subprocess.run([sys.executable, "-c", teil.replace("/etc/solarmaa-dash/config.toml", str(pfad))],
+                              timeout=120).returncode
+
+    def test_dienst_antwortet_im_update_sh(self):
+        """M-1: dienst_antwortet() fragt die Adresse ab, an die der Dienst bindet (server.host)."""
+        teil = self._update_sh_python("/api/health")
+        srv = self._attrappe("127.0.0.2", {"/api/health": {"status": "ok"}})
+        port = srv.server_address[1]
+        self.assertEqual(self._lauf(teil, f'[server]\nhost = "127.0.0.2"\nport = {port}\n'), 0)   # gebunden an 127.0.0.2
         srv.routes.clear()
-        self.assertEqual(lauf(ersetzt), 0)                                        # 404/503 zählt auch als «läuft»
-        srv.shutdown(); srv.server_close()
-        self.assertEqual(lauf(ersetzt), 1)                                        # niemand da: Fehler
+        self.assertEqual(self._lauf(teil, f'[server]\nhost = "127.0.0.2"\nport = {port}\n'), 0)   # 404/503 = läuft
+        lokal = self._attrappe("127.0.0.1", {"/api/health": {"status": "ok"}})
+        for host in ("", "0.0.0.0", "::"):
+            self.assertEqual(self._lauf(teil, f'[server]\nhost = "{host}"\nport = {lokal.server_address[1]}\n'), 0, host)
+        self.assertEqual(self._lauf(teil, f'[server]\nport = {lokal.server_address[1]}\n'), 0)
+        frei = self._attrappe("127.0.0.3", {}).server_address[1]
+        self.assertEqual(self._lauf(teil, f'[server]\nhost = "127.0.0.2"\nport = {frei}\n'), 1)     # niemand da
+
+    def test_abregelungsabfrage_im_update_sh(self):
+        """M-1: Die Abfrage «wird gerade abgeregelt?» vor dem Update nimmt dieselbe Adresse."""
+        teil = self._update_sh_python("/api/now")
+        aktiv = {"abregelung": {"aktiv": True, "modus": "auto"}}
+        srv = self._attrappe("127.0.0.2", {"/api/now": aktiv})
+        self.assertEqual(self._lauf(teil, f'[server]\nhost = "127.0.0.2"\nport = {srv.server_address[1]}\n'), 0)   # verschieben
+        srv.routes["/api/now"] = {"abregelung": {"aktiv": False, "modus": "auto"}}
+        self.assertEqual(self._lauf(teil, f'[server]\nhost = "127.0.0.2"\nport = {srv.server_address[1]}\n'), 1)
+        lokal = self._attrappe("127.0.0.1", {"/api/now": aktiv})
+        self.assertEqual(self._lauf(teil, f'[server]\nhost = "0.0.0.0"\nport = {lokal.server_address[1]}\n'), 0)
 
 
 class HochladenTests(unittest.TestCase):

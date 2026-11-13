@@ -12,13 +12,16 @@ dienst_antwortet() {
   python3 - <<'PY'
 import time, tomllib, urllib.error, urllib.request
 try:
-    port = tomllib.load(open("/etc/solarmaa-dash/config.toml", "rb")).get("server", {}).get("port", 80)
+    s = tomllib.load(open("/etc/solarmaa-dash/config.toml", "rb")).get("server", {})
 except Exception:
-    port = 80
+    s = {}
+# dieselbe Adresse, an die der Dienst bindet (serve: 0.0.0.0, :: und leer = alle, sonst server.host)
+host = "127.0.0.1" if str(s.get("host") or "") in ("", "0.0.0.0", "::") else str(s["host"])
+host, port = (f"[{host}]" if ":" in host else host), s.get("port", 80)
 for _ in range(20):
     time.sleep(2)
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3)
+        urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=3)
         raise SystemExit(0)
     except urllib.error.HTTPError:
         raise SystemExit(0)
@@ -35,8 +38,10 @@ PY
   if [[ "${1:-}" != "--erzwingen" ]] && python3 - <<'PY'
 import json, sys, tomllib, urllib.request
 try:
-    port = tomllib.load(open("/etc/solarmaa-dash/config.toml", "rb")).get("server", {}).get("port", 80)
-    d = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/now", timeout=5))
+    s = tomllib.load(open("/etc/solarmaa-dash/config.toml", "rb")).get("server", {})
+    host = "127.0.0.1" if str(s.get("host") or "") in ("", "0.0.0.0", "::") else str(s["host"])
+    host, port = (f"[{host}]" if ":" in host else host), s.get("port", 80)
+    d = json.load(urllib.request.urlopen(f"http://{host}:{port}/api/now", timeout=5))
     a = d.get("abregelung") or {}
     sys.exit(0 if a.get("aktiv") and a.get("modus") in ("auto", "test") else 1)
 except Exception:

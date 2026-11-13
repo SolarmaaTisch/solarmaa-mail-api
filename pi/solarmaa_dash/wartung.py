@@ -54,7 +54,7 @@ class Wartung:
         """Ergebnis des letzten Update-Laufs aus dem Protokoll von update.sh, sofern er nach «seit»
         begonnen hat. None = noch kein Lauf seither oder noch nicht fertig."""
         try:
-            zeilen = UPDATE_LOG.read_text(encoding="utf-8", errors="replace")[-20000:].splitlines()
+            zeilen = UPDATE_LOG.read_text(encoding="utf-8", errors="replace")[-20000:].split("\n")
         except OSError:
             return None
         start = next((i for i in range(len(zeilen) - 1, -1, -1) if zeilen[i].startswith("=== Update ")), None)

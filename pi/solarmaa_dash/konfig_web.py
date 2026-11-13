@@ -213,13 +213,14 @@ def neue_abschnitte_pruefen(neu: str, alt: str) -> None:
                          ", ".join(f"[{k}]" for k in fremd))
 
 
-def pruefen(text: str) -> dict:
-    """Lädt die Konfiguration probeweise und baut alle Teile auf, ohne Geräte anzusprechen."""
+def pruefen(text: str, streng: bool = True) -> dict:
+    """Lädt die Konfiguration probeweise und baut alle Teile auf, ohne Geräte anzusprechen.
+    streng: auch Werte ablehnen, die eine bestehende Datei beim Start nur als Warnung meldet."""
     with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8") as fh:
         fh.write(text)
         tmp = fh.name
     try:
-        cfg = config_mod.load(tmp)
+        cfg = config_mod.load(tmp, streng=streng)
     finally:
         os.unlink(tmp)
     probe = copy.deepcopy(cfg)
@@ -281,7 +282,7 @@ class KonfigWeb:
             raise ValueError(f"Konfiguration ungültig, nichts gespeichert: {e}") from e
         if fern:
             try:
-                cfg_alt = pruefen(alt)
+                cfg_alt = pruefen(alt, streng=False)     # die bisherige Datei darf alte Mängel haben
             except Exception as e:  # noqa: BLE001
                 raise ValueError(f"Bisherige Konfiguration nicht prüfbar, nichts gespeichert: {e}") from e
             fern_pruefen(cfg_neu, cfg_alt)

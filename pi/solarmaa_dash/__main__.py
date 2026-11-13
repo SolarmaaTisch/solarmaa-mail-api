@@ -169,6 +169,12 @@ def _aufbauen(args):
     b = cfg.get("benachrichtigung") or {}
     eingerichtet = any((b.get(k) or {}).get(f) for k, f in (("lampe", "host"), ("push", "thema"), ("email", "smtp_host")))
     state.alarme = Alarme(cfg) if eingerichtet else KeineAlarme()
+    if cfg.get("_warnungen"):
+        # Werte, die beim Speichern abgelehnt würden, beim Start aber nur ausgeschaltet werden (siehe config.load):
+        # im Journal und als Alarm, der auch ans Portal geht
+        text = "Konfiguration: " + " ".join(cfg["_warnungen"])
+        log.warning(text)
+        state.alarme.setzen("konfiguration", text, "warnung")
     # Auch im Modus «aus» anlegen, sobald Wechselrichter eingetragen sind: So werden sie nach
     # einem Wechsel von auto/test auf aus sicher wieder freigegeben.
     if cfg["abregelung"].get("modus", "aus") != "aus" or cfg["abregelung"].get("wechselrichter"):
@@ -202,7 +208,7 @@ def _aufbauen(args):
 def _konfigfehler(e: BaseException) -> bool:
     """Fehler, die an der Konfiguration liegen (verständliche Meldung statt Traceback)."""
     import tomllib
-    return isinstance(e, (ValueError, KeyError, TypeError, tomllib.TOMLDecodeError, FileNotFoundError))
+    return isinstance(e, (ValueError, tomllib.TOMLDecodeError, FileNotFoundError))
 
 
 def cmd_konfig_pruefen(args) -> int:
@@ -211,9 +217,11 @@ def cmd_konfig_pruefen(args) -> int:
     from .konfig_web import pruefen
     pfad = args.config or DEFAULT_CONFIG
     try:
-        pruefen(Path(pfad).read_text(encoding="utf-8"))
+        pruefen(Path(pfad).read_text(encoding="utf-8"), streng=False)     # so, wie der Dienst sie beim Start lädt
     except Exception as e:  # noqa: BLE001 – jede Ursache melden, nie einen Traceback
-        print(f"{type(e).__name__}: {e}" if not isinstance(e, ValueError) else str(e), file=sys.stderr)
+        text = f"{type(e).__name__}: {e}" if not isinstance(e, ValueError) else str(e)
+        # eine Zeile, nur druckbare Zeichen: landet in update.log und als Quittung im Portal
+        print("".join(c if c.isprintable() else " " for c in text)[:500], file=sys.stderr)
         return 1
     print("Konfiguration passt.")
     return 0
@@ -236,6 +244,10 @@ def cmd_run(args) -> int:
             return 1
         if _konfigfehler(e):
             log.error("Konfiguration ungültig, Dienst startet nicht: %s (Datei: %s)", e, cfg_pfad or "keine")
+            return 2
+        if isinstance(e, (KeyError, TypeError)):
+            log.exception("Dienst startet nicht: unerwarteter Fehler %s (möglicherweise ein fehlender oder falsch "
+                          "geschriebener Wert in %s)", type(e).__name__, cfg_pfad or "der Konfiguration")
             return 2
         raise
     stop = threading.Event()

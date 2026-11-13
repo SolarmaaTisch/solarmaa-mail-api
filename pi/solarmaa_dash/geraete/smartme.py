@@ -76,6 +76,11 @@ class SmartMeKonto:
 
 
 def konto(cfg_smartme: dict) -> SmartMeKonto:
+    from ..adressen import pruefe_url
+    try:
+        pruefe_url(cfg_smartme.get("basis_url", "https://api.smart-me.com"), ("https",), "smartme.basis_url", lokal_http=True)
+    except ValueError as e:
+        raise GeraetFehler(str(e)) from None
     key = (cfg_smartme.get("basis_url"), cfg_smartme.get("api_key"), cfg_smartme.get("benutzer"))
     with _LOCK:
         if key not in _KONTEN:
