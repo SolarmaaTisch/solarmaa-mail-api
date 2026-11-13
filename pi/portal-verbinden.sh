@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verbindet diesen Pi mit dem Solarmaa-Portal: holt das neueste Programm, trägt den Portal-Block
-# in die Konfiguration ein (samt fernwartung = true) und startet den Dienst neu.
+# in die Konfiguration ein (samt fernwartung = true; ein vorhandenes false bleibt) und startet den Dienst neu.
 #
 #   curl -fsSL https://raw.githubusercontent.com/SolarmaaTisch/solarmaa-mail-api/claude/vibrant-newton-yc8ppy/pi/portal-verbinden.sh | sudo bash -s -- TOKEN
 set -euo pipefail
@@ -44,10 +44,15 @@ python3 - "$CONF" "$URL" "$KEY" "$TOKEN" <<'PY'
 import re, sys
 pfad, url, key, token = sys.argv[1:5]
 text = open(pfad, encoding="utf-8").read()
+# Ein bewusst gesetztes fernwartung = false im bisherigen [portal]-Abschnitt bleibt erhalten;
+# fehlt die Zeile, wird die Fernwartung eingeschaltet (ENTSCHEIDE E7).
+bisher = re.search(r"(?ms)^\[portal\][^\n]*\n(.*?)(?=^\[|\Z)", text)
+aus = bool(bisher and re.search(r"(?m)^\s*fernwartung\s*=\s*false\b", bisher.group(1)))
 # vorhandenen [portal]-Abschnitt entfernen (bis zur nächsten Tabelle oder zum Dateiende)
 text = re.sub(r"(?ms)^\[portal\][^\n]*\n.*?(?=^\[|\Z)", "", text).rstrip("\n")
-# fernwartung = true: Solarmaa darf diese Anlage über das Portal aktualisieren und konfigurieren (E7)
-text += f'\n\n[portal]\nurl = "{url}"\nschluessel = "{key}"\ntoken = "{token}"\nfernwartung = true\n'
+text += (f'\n\n[portal]\nurl = "{url}"\nschluessel = "{key}"\ntoken = "{token}"\n'
+         '# Fernwartung durch Solarmaa (auf false setzen, wenn nicht vereinbart)\n'
+         f'fernwartung = {"false" if aus else "true"}\n')
 open(pfad, "w", encoding="utf-8").write(text)
 PY
 chown root:solarmaa-dash "$CONF"; chmod 660 "$CONF"

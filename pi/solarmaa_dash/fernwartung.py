@@ -93,6 +93,19 @@ def _geheime(text: str) -> set[str]:
     return {w for w in werte if len(w) >= 4 and w != MASKE}
 
 
+def _freigabe_offen(abr) -> bool:
+    """True, solange ein Wechselrichter noch begrenzt sein könnte: Zustand nach dem Start unbekannt,
+    letzte Vorgabe unter der Nennleistung oder letzter Schreibversuch fehlgeschlagen. Ein Neustart
+    (Konfiguration, Update) soll erst kommen, wenn die Anlage sicher freigegeben ist. Nur lesend."""
+    if getattr(abr, "unbekannt", False):
+        return True
+    for w in getattr(abr, "wr", None) or []:
+        letzte, nenn = getattr(w, "letzte_w", None), getattr(w, "nenn_w", None)
+        if getattr(w, "fehler", None) or (letzte is not None and letzte != nenn):
+            return True
+    return False
+
+
 class Fernwartung:
     def __init__(self, portal, state, daten_dir: Path | None):
         self.portal, self.state = portal, state
@@ -104,6 +117,7 @@ class Fernwartung:
         self._konfig_pause_bis = 0.0
         self._gewarnt: str | None = None
         self._geheim: set[str] = set()
+        self._schreibfehler = False
 
     # ------------------------------------------------------------ Zustand
     def _sichern(self) -> None:
@@ -112,6 +126,17 @@ class Fernwartung:
         except OSError as e:
             # Ohne dauerhaften Zustand wäre «höchstens einmal» nicht mehr sicher: lieber nichts ausführen.
             raise RuntimeError(f"Zustand der Fernwartung nicht schreibbar ({type(e).__name__})") from e
+
+    def _sichern_weich(self) -> None:
+        """Im Nachlauf: Ein Schreibfehler darf Quittungen und Hochladen nicht aufhalten."""
+        try:
+            self._sichern()
+        except RuntimeError as e:
+            if not self._schreibfehler:
+                log.error("Fernwartung: %s", e)
+            self._schreibfehler = True
+        else:
+            self._schreibfehler = False
 
     def _saeubern(self, text: str) -> str:
         for w in sorted(self._geheim, key=len, reverse=True):
@@ -143,29 +168,56 @@ class Fernwartung:
                         len(befehle), MAX_PAKET)
             befehle = befehle[:MAX_PAKET]
         angenommen = False
+        gueltig = []
         for b in befehle:
             if not (isinstance(b, dict) and isinstance(b.get("id"), str) and UUID.match(b["id"])
                     and isinstance(b.get("art"), str)):
                 log.warning("Fernwartung: ungültiger Befehl verworfen")
                 continue
-            bid, art = b["id"], b["art"][:20]
-            if bid in self.z["gesehen"]:
-                continue                                   # nie zweimal ausführen
-            self.z["gesehen"] = (self.z["gesehen"] + [bid])[-MAX_GESEHEN:]
-            self._sichern()                                # vor jeder Wirkung auf die Platte
-            alt = self._konfig_text()
-            self._geheim = _geheime(alt) if alt else set()
-            grund = self._ablehnen(art, angenommen)
-            if grund:
-                self._quittung(bid, art, False, grund)
-                self._sichern()
-                continue
-            self.z["ausgefuehrt"] = [t for t in self.z["ausgefuehrt"] if t > time.time() - 3600] + [int(time.time())]
-            if art == "update":
-                angenommen = self._update(bid)
-            else:
-                angenommen = self._konfig(bid, b.get("nutzlast"))
+            gueltig.append(b)
+        for nr, b in enumerate(gueltig):
+            try:
+                angenommen = self._einer(b, angenommen)
+            except RuntimeError as e:
+                # Zustand nicht schreibbar: nichts (weiter) ausführen. Dieser und die übrigen Befehle
+                # der Antwort bekommen eine Fehlquittung, die im Speicher bleibt, bis sie hinausgeht.
+                log.error("Fernwartung: %s. Befehle werden nicht ausgeführt.", e)
+                for rest in gueltig[nr:]:
+                    if rest is not b and rest["id"] in self.z["gesehen"]:
+                        continue                           # früher schon behandelt
+                    if rest["id"] not in self.z["gesehen"]:
+                        self.z["gesehen"] = (self.z["gesehen"] + [rest["id"]])[-MAX_GESEHEN:]
+                    w = self.z["wartend"]
+                    if w and w["id"] == rest["id"]:
+                        if w.get("gespeichert") or w.get("angefordert"):
+                            continue                       # läuft bereits: wird im Nachlauf quittiert
+                        self.z["wartend"] = None           # noch nichts bewirkt
+                    if rest["id"] not in [q["id"] for q in self.z["quittungen"]]:
+                        self._quittung(rest["id"], rest["art"][:20], False,
+                                       "Zustand der Fernwartung auf dem Pi nicht schreibbar, nichts ausgeführt")
+                return
+
+    def _einer(self, b: dict, angenommen: bool) -> bool:
+        """Verarbeitet einen Befehl. Liefert, ob in dieser Antwort (schon) ein Befehl angenommen ist."""
+        bid, art = b["id"], b["art"][:20]
+        if bid in self.z["gesehen"]:
+            return angenommen                          # nie zweimal ausführen
+        self.z["gesehen"] = (self.z["gesehen"] + [bid])[-MAX_GESEHEN:]
+        self._sichern()                                # vor jeder Wirkung auf die Platte
+        alt = self._konfig_text()
+        self._geheim = _geheime(alt) if alt else set()
+        grund = self._ablehnen(art, angenommen)
+        if grund:
+            self._quittung(bid, art, False, grund)
             self._sichern()
+            return angenommen
+        self.z["ausgefuehrt"] = [t for t in self.z["ausgefuehrt"] if t > time.time() - 3600] + [int(time.time())]
+        if art == "update":
+            angenommen = self._update(bid)
+        else:
+            angenommen = self._konfig(bid, b.get("nutzlast"))
+        self._sichern()
+        return angenommen
 
     def _ablehnen(self, art: str, angenommen: bool) -> str | None:
         abr = getattr(self.state, "abregelung", None)
@@ -173,6 +225,8 @@ class Fernwartung:
             return "Fernwartung ist auf dieser Anlage ausgeschaltet"
         if abr is not None and abr.aktiv:
             return "Abgelehnt: Anlage wird gerade abgeregelt. Später erneut senden."
+        if abr is not None and _freigabe_offen(abr):
+            return "Abgelehnt: Freigabe eines Wechselrichters steht noch aus."
         if angenommen:
             return "Ein anderer Befehl wurde gerade angenommen, bitte erneut senden"
         if self.z["wartend"]:
@@ -188,6 +242,7 @@ class Fernwartung:
         self._sichern()
         try:
             self.state.wartung.update_anfordern("portal")
+            self.z["wartend"]["angefordert"] = True
         except Exception as e:  # noqa: BLE001
             self.z["wartend"] = None
             self._quittung(bid, "update", False, str(e) if isinstance(e, ValueError)
@@ -253,7 +308,7 @@ class Fernwartung:
         if ergebnis is not None:
             self.z["wartend"] = None
             self._quittung(w["id"], w["art"], ergebnis[0], ergebnis[1])
-            self._sichern()
+            self._sichern_weich()
 
     def _quittungen_senden(self) -> None:
         grenze = time.time() - QUITTUNG_TAGE * 86400
@@ -272,7 +327,7 @@ class Fernwartung:
                 break
         if geaendert:
             self.z["quittungen"] = rest
-            self._sichern()
+            self._sichern_weich()
 
     def _konfig_hochladen(self) -> None:
         if time.time() < self._konfig_pause_bis:

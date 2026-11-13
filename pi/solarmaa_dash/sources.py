@@ -311,7 +311,12 @@ class AnlagenQuelle:
                         pv is not None and not pv_fehler, grid_alter, verbraucher or None)
 
 
+def ist_demo(cfg: dict) -> bool:
+    """True, wenn mit dieser Konfiguration die simulierte Anlage läuft (keine Geräte und typ demo)."""
+    return not cfg.get("geraet") and cfg["quelle"]["typ"] == "demo"
+
+
 def make_source(cfg: dict):
-    if not cfg.get("geraet") and cfg["quelle"]["typ"] == "demo":
+    if ist_demo(cfg):
         return DemoSource(kwp=float(cfg["anlage"]["kwp"]))
     return AnlagenQuelle(cfg)

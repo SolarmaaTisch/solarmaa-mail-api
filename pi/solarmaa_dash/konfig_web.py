@@ -29,6 +29,9 @@ GEHEIM_NAMEN = ("passwort", "api_key", "token", "entsoe_token", "thema", "lebens
 GEHEIM = re.compile(r'^(\s*(?:' + "|".join(GEHEIM_NAMEN) + r')\s*=\s*)"([^"]*)"(.*)$')
 # Nur vor Ort änderbar (ENTSCHEIDE E7): Sonst könnte sich Solarmaa selbst aussperren.
 GESPERRT_FERN = ("portal", "server", "daten")
+# Mehrzeilige Zeichenketten können ganze nachgebaute Abschnitte enthalten, die die zeilenweise
+# Erkennung der Geheimnisse täuschen: über das Portal nicht erlaubt.
+MEHRZEILIG = ("'''", '"""')
 TABELLE = re.compile(r"^\s*\[\[?[^\]]+\]\]?\s*(#.*)?$")
 
 
@@ -98,53 +101,111 @@ def sicher_maskiert(text: str) -> str:
     return maskiert
 
 
-def _abschnitte(text: str) -> dict[str, list[str]]:
-    """Zeilen je Abschnitt (Schlüssel wie in _geheimnisse: Kopf + Nr.), ohne Leerzeilen und Kommentare."""
-    zaehler: dict[str, int] = {}
-    abschnitt = ""
-    aus: dict[str, list[str]] = {"": []}
-    for z in text.split("\n"):
-        if TABELLE.match(z):
-            kopf = z.split("#")[0].strip()
-            zaehler[kopf] = zaehler.get(kopf, 0) + 1
-            abschnitt = f"{kopf}#{zaehler[kopf]}"
-            aus[abschnitt] = []
-            continue
-        z = z.strip()
-        if z and not z.startswith("#"):
-            aus[abschnitt].append(z)
-    return aus
+def _blaetter(knoten, pfad: tuple = ()):
+    """Liefert (pfad, wert) für jeden einfachen Wert einer geladenen Konfiguration."""
+    if isinstance(knoten, dict):
+        for k, v in knoten.items():
+            yield from _blaetter(v, pfad + (k,))
+    elif isinstance(knoten, list):
+        for i, v in enumerate(knoten):
+            yield from _blaetter(v, pfad + (i,))
+    else:
+        yield pfad, knoten
 
 
-def fern_pruefen(neu: str, alt: str, cfg_neu: dict, cfg_alt: dict) -> None:
-    """Regeln für Änderungen über das Portal (ENTSCHEIDE E7). neu = Text wie gesendet (Geheimnisse
-    evtl. als ********), alt = Datei auf dem Pi, cfg_* = die daraus geladenen Konfigurationen."""
+def _bei(knoten, pfad: tuple):
+    for k in pfad:
+        try:
+            knoten = knoten[k]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return knoten
+
+
+def _pfad_text(pfad: tuple) -> str:
+    """('geraet', 1) -> «[[geraet]] Nr. 2», ('smartme',) -> «[smartme]», () -> «Dateianfang»."""
+    if not pfad:
+        return "Dateianfang"
+    teile, nr = [], ""
+    for k in pfad:
+        if isinstance(k, int):
+            nr = f" Nr. {k + 1}"
+        else:
+            teile.append(k)
+            nr = ""
+    name = ".".join(teile)
+    return f"[[{name}]]{nr}" if nr else f"[{name}]"
+
+
+def _einfach(tabelle) -> dict:
+    """Die Felder eines Tabelleneintrags ohne Geheimnisse und ohne Untertabellen (host, basis_url, benutzer …)."""
+    if not isinstance(tabelle, dict):
+        return {}
+    return {k: v for k, v in tabelle.items() if k not in GEHEIM_NAMEN and not isinstance(v, dict)
+            and not (isinstance(v, list) and any(isinstance(x, dict) for x in v))}
+
+
+def uebernahme_pruefen(gesendet: str, neu: str, alt: str) -> None:
+    """Prüft auf TOML-Ebene, was demaskieren() eingesetzt hat. gesendet = Text aus dem Portal
+    (Geheimnisse evtl. als ********), neu = derselbe Text nach demaskieren(), alt = Datei auf dem Pi.
+
+    Ein gespeichertes Geheimnis darf nur dorthin zurück, wo es herkommt: unter denselben Pfad, und
+    nur, wenn die übrigen Felder dieses Eintrags (host, basis_url, benutzer …) unverändert sind.
+    Sonst liesse sich das echte Passwort an eine fremde Adresse schicken oder in ein Feld setzen,
+    das nicht als geheim gilt und darum im Portal lesbar wäre."""
+    if any(m in gesendet for m in MEHRZEILIG):
+        raise ValueError("Mehrzeilige Zeichenketten (''' oder \"\"\") sind über das Portal nicht erlaubt")
+    try:
+        t_ges, t_neu, t_alt = tomllib.loads(gesendet), tomllib.loads(neu), tomllib.loads(alt)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"Konfiguration ungültig, nichts gespeichert: {e}") from e
+    b_ges, b_neu = dict(_blaetter(t_ges)), dict(_blaetter(t_neu))
+    if b_ges.keys() != b_neu.keys():
+        raise ValueError(f"Platzhalter {MASKE} steht an einer Stelle, an der kein Geheimnis erwartet wird")
+    for pfad, wert in b_neu.items():
+        if wert == b_ges[pfad] and type(wert) is type(b_ges[pfad]):
+            continue                                   # so gesendet, nichts eingesetzt
+        eintrag, name = pfad[:-1], pfad[-1]
+        wo = _pfad_text(eintrag)
+        if name not in GEHEIM_NAMEN or b_ges[pfad] != MASKE:
+            raise ValueError(f"Platzhalter {MASKE} steht in {wo} an einer Stelle, an der kein Geheimnis erwartet wird")
+        if _bei(t_alt, pfad) != wert:
+            raise ValueError(f"{wo}: Für {name} ist an dieser Stelle kein Wert gespeichert. Wurden Einträge "
+                             f"verschoben, eingefügt oder gelöscht, das Geheimnis neu eingeben (statt {MASKE}).")
+        if _einfach(_bei(t_neu, eintrag)) != _einfach(_bei(t_alt, eintrag)):
+            raise ValueError(f"Abschnitt {wo} wurde geändert; Geheimnis neu eingeben "
+                             f"(statt {MASKE} den echten Wert eintragen). Das gilt auch, wenn Einträge verschoben wurden.")
+
+
+def fern_pruefen(cfg_neu: dict, cfg_alt: dict) -> None:
+    """Regeln für Änderungen über das Portal (ENTSCHEIDE E7), auf den geladenen Konfigurationen."""
+    from .sources import ist_demo
     for k in GESPERRT_FERN:
         if cfg_neu.get(k) != cfg_alt.get(k):
             raise ValueError(f"Abschnitt [{k}] kann nur vor Ort geändert werden")
-    if cfg_neu["quelle"].get("typ") == "demo" and cfg_alt["quelle"].get("typ") != "demo":
-        raise ValueError("Der Demo-Modus (quelle.typ) kann nur vor Ort eingeschaltet werden")
+    # Massgebend ist die Quelle, die tatsächlich laufen würde (demo = typ demo UND keine Geräte).
+    if (ist_demo(cfg_neu) and not ist_demo(cfg_alt)) or \
+            (cfg_neu["quelle"].get("typ") == "demo" and cfg_alt["quelle"].get("typ") != "demo"):
+        raise ValueError("Der Demo-Modus (quelle.typ = \"demo\" ohne Geräte) kann nur vor Ort eingeschaltet werden")
     if cfg_neu["haus"].get("demo") and not cfg_alt["haus"].get("demo"):
         raise ValueError("Der Demo-Modus ([haus] demo) kann nur vor Ort eingeschaltet werden")
-    # Ein übernommenes Geheimnis gilt nur für den unveränderten Abschnitt. Sonst liesse sich z. B.
-    # basis_url oder host umbiegen, und der Pi schickte das echte Passwort an eine fremde Adresse.
-    uebernommen: dict[str, set[str]] = {}
-    for _i, k, m in _geheimnisse(neu):
-        if m.group(2) == MASKE:
-            abschnitt, name = k.rsplit("|", 1)
-            uebernommen.setdefault(abschnitt, set()).add(name)
-    if not uebernommen:
-        return
-    a_neu, a_alt = _abschnitte(neu), _abschnitte(alt)
 
-    def ohne(zeilen: list[str], namen: set[str]) -> list[str]:
-        return [z for z in zeilen if not (GEHEIM.match(z) and z.split("=")[0].strip() in namen)]
 
-    for abschnitt, namen in uebernommen.items():
-        if ohne(a_neu.get(abschnitt, []), namen) != ohne(a_alt.get(abschnitt, []), namen):
-            kopf = abschnitt.rsplit("#", 1)[0] or "Dateianfang"
-            raise ValueError(f"Abschnitt {kopf} wurde geändert; Geheimnis neu eingeben "
-                             f"(statt {MASKE} den echten Wert eintragen)")
+def neue_abschnitte_pruefen(neu: str, alt: str) -> None:
+    """Lehnt oberste Abschnitte ab, die das Programm nicht kennt und die es bisher in der Datei
+    nicht gab. (Bestehende unbekannte Abschnitte bleiben erlaubt, damit keine laufende Anlage
+    plötzlich nicht mehr speicherbar ist.)"""
+    try:
+        bisher = set(tomllib.loads(alt))
+    except tomllib.TOMLDecodeError:
+        bisher = set()
+    try:
+        fremd = sorted(set(tomllib.loads(neu)) - set(config_mod.DEFAULTS) - bisher)
+    except tomllib.TOMLDecodeError:
+        return                       # die eigentliche Prüfung meldet den Fehler mit Zeile
+    if fremd:
+        raise ValueError("Konfiguration ungültig, nichts gespeichert: unbekannter Abschnitt " +
+                         ", ".join(f"[{k}]" for k in fremd))
 
 
 def pruefen(text: str) -> dict:
@@ -205,7 +266,10 @@ class KonfigWeb:
         if fern and basis != hashlib.sha256(maskieren(alt).encode("utf-8")).hexdigest():
             raise ValueError("Konfiguration wurde inzwischen geändert. Im Portal neu laden.")
         text = text.replace("\r\n", "\n")
+        if fern and any(m in text for m in MEHRZEILIG):
+            raise ValueError("Mehrzeilige Zeichenketten (''' oder \"\"\") sind über das Portal nicht erlaubt")
         neu = demaskieren(text, alt)
+        neue_abschnitte_pruefen(neu, alt)
         try:
             cfg_neu = pruefen(neu)
         except Exception as e:  # noqa: BLE001 – jede Ursache dem Benutzer zeigen
@@ -215,7 +279,8 @@ class KonfigWeb:
                 cfg_alt = pruefen(alt)
             except Exception as e:  # noqa: BLE001
                 raise ValueError(f"Bisherige Konfiguration nicht prüfbar, nichts gespeichert: {e}") from e
-            fern_pruefen(text, alt, cfg_neu, cfg_alt)
+            fern_pruefen(cfg_neu, cfg_alt)
+            uebernahme_pruefen(text, neu, alt)
         ziel = None
         if self.sicherung is not None:
             self.sicherung.mkdir(mode=0o750, exist_ok=True)

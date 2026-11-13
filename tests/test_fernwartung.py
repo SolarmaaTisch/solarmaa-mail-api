@@ -15,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from solarmaa_dash import config, konfig_web, wartung  # noqa: E402
 from solarmaa_dash.fernwartung import DATEI, Fernwartung, ruecksetzen_falls_probe  # noqa: E402
-from solarmaa_dash.konfig_web import MASKE, KonfigWeb, demaskieren, fern_pruefen, maskieren, sicher_maskiert  # noqa: E402
+from solarmaa_dash.konfig_web import (MASKE, KonfigWeb, demaskieren, maskieren, sicher_maskiert,  # noqa: E402
+                                      uebernahme_pruefen)
 from solarmaa_dash.portal import Portal  # noqa: E402
 from solarmaa_dash.server import State  # noqa: E402
 from solarmaa_dash.sources import DemoSource  # noqa: E402
@@ -278,21 +279,119 @@ class KonfigFernTests(unittest.TestCase):
         self.assertIn('api_key = "neuer-schluessel-99"', u.pfad.read_text())
         self.assertIn(f'passwort = "{PASSWORT}"', u.pfad.read_text())
 
-    def test_fern_pruefen_direkt(self):
+    def test_uebernahme_pruefen_direkt(self):
         alt = '[[geraet]]\nname = "A"\ntyp = "shelly"\nhost = "10.0.0.1"\npasswort = "p-eins-1"\n\n' \
               '[[geraet]]\nname = "B"\ntyp = "shelly"\nhost = "10.0.0.2"\npasswort = "p-zwei-2"\n'
-        cfg = config._merge(config.DEFAULTS, {})
         m = maskieren(alt)
-        fern_pruefen(m, alt, cfg, cfg)                                           # unverändert: in Ordnung
-        fern_pruefen(m + "\n# Kommentar\n\n", alt, cfg, cfg)
-        with self.assertRaisesRegex(ValueError, "Geheimnis neu eingeben"):       # zweites Gerät umgebogen
-            fern_pruefen(m.replace("10.0.0.2", "10.9.9.9"), alt, cfg, cfg)
-        fern_pruefen(m.replace("10.0.0.2", "10.9.9.9").replace(f'"B"\ntyp = "shelly"\nhost = "10.9.9.9"\npasswort = "{MASKE}"',
-                                                               '"B"\ntyp = "shelly"\nhost = "10.9.9.9"\npasswort = "neu-getippt"'),
-                     alt, cfg, cfg)
-        with self.assertRaisesRegex(ValueError, "Demo-Modus"):
-            fern_pruefen("", "", config._merge(cfg, {"haus": {"demo": True}}), cfg)
-        fern_pruefen("", "", config._merge(cfg, {"haus": {"demo": True}}), config._merge(cfg, {"haus": {"demo": True}}))
+
+        def pruefe(gesendet):
+            uebernahme_pruefen(gesendet, demaskieren(gesendet, alt), alt)
+
+        pruefe(m)                                                                # unverändert: in Ordnung
+        pruefe(m + "\n# Kommentar\n\n")
+        pruefe(m.replace('host = "10.0.0.1"', 'host = "10.0.0.1"   # Kommentar dahinter'))
+        with self.assertRaisesRegex(ValueError, r"\[\[geraet\]\] Nr. 2 wurde geändert; Geheimnis neu eingeben"):
+            pruefe(m.replace("10.0.0.2", "10.9.9.9"))                            # zweites Gerät umgebogen
+        pruefe(m.replace("10.0.0.2", "10.9.9.9").replace(f'host = "10.9.9.9"\npasswort = "{MASKE}"',
+                                                         'host = "10.9.9.9"\npasswort = "neu-getippt"'))
+        teile = m.split("\n\n")
+        with self.assertRaisesRegex(ValueError, "Geheimnis neu eingeben"):       # Geräte vertauscht
+            pruefe(teile[1].rstrip("\n") + "\n\n" + teile[0] + "\n")
+        with self.assertRaisesRegex(ValueError, "Geheimnis neu eingeben"):       # erstes Gerät gelöscht
+            pruefe(teile[1])
+        with self.assertRaisesRegex(ValueError, "Mehrzeilige"):
+            pruefe(m + "\n[anlage]\nname = \'\'\'\nX\'\'\'\n")
+        with self.assertRaisesRegex(ValueError, "Mehrzeilige"):
+            pruefe(m + '\n[anlage]\nname = """X"""\n')
+
+    def test_geheimnis_wandert_nicht_in_fremdes_feld(self):
+        """Belegfall des Prüfers: nachgebauter [smartme]-Abschnitt in einem mehrzeiligen Wert eines neuen Geräts."""
+        u = Umgebung(self)
+        m = maskieren(u.text)
+        echt = f'[easee]\nbenutzer = "tin"\npasswort = "{MASKE}"\n'
+        self.assertIn(echt, m)
+        boese = m.replace(echt, '[[geraet]]\nname = "x"\nrolle = "verbraucher"\ntyp = "whatwatt"\n'
+                          'host = "angreifer.example"\npasswort = \'\'\'\n' + echt.rstrip("\n") + "\'\'\'\n")
+        self.assertIn(PASSWORT, demaskieren(boese, u.text))                       # die Zeilenerkennung fällt darauf herein
+        text = self._abgelehnt(u, u.konfig_befehl(1, boese), "Mehrzeilige")
+        self.assertNotIn(PASSWORT, text)
+        # ohne die Sperre mehrzeiliger Werte fängt die Prüfung auf TOML-Ebene denselben Fall
+        with self.assertRaisesRegex(ValueError, "kein Geheimnis erwartet|kein Wert gespeichert"):
+            with mock.patch.object(konfig_web, "MEHRZEILIG", ()):
+                konfig_web.uebernahme_pruefen(boese, demaskieren(boese, u.text), u.text)
+
+    def test_abgelehnt_demo_durch_entfernen_der_geraete(self):
+        """Belegfall des Prüfers: typ = "demo" steht schon da, wirksam wird es erst ohne [[geraet]]."""
+        u = Umgebung(self)
+        geraet = '\n[[geraet]]\nname = "WR"\nrolle = "pv"\ntyp = "sunspec"\nhost = "192.0.2.50"\n'
+        u.text = u.text.replace("[smartme]", '[quelle]\ntyp = "demo"\n\n[smartme]') + geraet
+        u.pfad.write_text(u.text)
+        m = maskieren(u.text)
+        self._abgelehnt(u, u.konfig_befehl(1, m.replace(geraet, "")), "Demo-Modus")
+        u.srv.posts.clear()
+        u.lauf([u.konfig_befehl(2, m.replace("192.0.2.50", "192.0.2.51"))])       # Gerät ändern bleibt erlaubt
+        self.assertEqual(u.neustarts, 1)
+
+    def test_profil_ist_nur_ein_name(self):
+        """Belegfall des Prüfers: Profil als Pfad auf eine Datei mit eigenem [steuerung]-Abschnitt."""
+        import os
+        from solarmaa_dash.abregelung import lade_steuerprofil
+        from solarmaa_dash.geraete.modbus_profil import PROFIL_DIR, lade_profil
+        u = Umgebung(self)
+        # der fremde Abschnitt steht schon in der Datei (z. B. von früher): es zählt allein der Profilname
+        u.text += '\n[steuerung]\nlimit_register = 40001\nlimit_typ = "u16"\nfreigabe_register = 12345\nfreigabe_wert = 7\n' \
+                  '\n[werte.pv_w]\nregister = 1\ntyp = "u16"\n'
+        u.pfad.write_text(u.text)
+        rel = os.path.relpath(u.pfad.with_suffix(""), PROFIL_DIR)
+        for name in (rel, str(u.pfad), str(u.pfad.with_suffix("")), "../profile/kostal_piko_ci", "Kostal", "", "a/b", 7, None):
+            with self.assertRaises(ValueError, msg=repr(name)):
+                lade_steuerprofil(name)
+            with self.assertRaises(ValueError, msg=repr(name)):
+                lade_profil(name)
+        self.assertIn("limit_register", lade_steuerprofil("kostal_piko_ci")["steuerung"])
+        wr = ('\n[abregelung]\nmodus = "simulation"\npreisquelle = "keine"\n\n[[abregelung.wechselrichter]]\nname = "x"\n'
+              'host = "192.0.2.1"\nnennleistung_w = 1000\nprofil = "%s"\n')
+        self._abgelehnt(u, u.konfig_befehl(1, maskieren(u.text) + wr % rel), "Profilname")
+        u.srv.posts.clear()
+        self._abgelehnt(u, u.konfig_befehl(2, maskieren(u.text) + '\n[[geraet]]\nname = "g"\nrolle = "pv"\n'
+                                           f'typ = "modbus_profil"\nhost = "192.0.2.2"\nprofil = "{u.pfad}"\n'), "Profilname")
+        with self.assertRaisesRegex(ValueError, "Profilname"):                    # lokal gilt dasselbe
+            u.state.konfig.speichern(maskieren(u.text) + wr % rel, "admin")
+
+    def test_neue_unbekannte_abschnitte_werden_abgelehnt(self):
+        u = Umgebung(self)
+        m = maskieren(u.text)
+        steuerung = '\n[steuerung]\nlimit_register = 40001\n'
+        self._abgelehnt(u, u.konfig_befehl(1, m + steuerung), r"unbekannter Abschnitt \[steuerung\]")
+        with self.assertRaisesRegex(ValueError, r"unbekannter Abschnitt \[steuerung\]"):
+            u.state.konfig.speichern(m + steuerung, "admin")                      # auch lokal
+        self.assertEqual(u.pfad.read_text(), u.text)
+        # ein Abschnitt, den es in der Datei schon gibt, macht die Anlage nicht unspeicherbar
+        u.text += '\n[notizen]\ntext = "bleibt"\n'
+        u.pfad.write_text(u.text)
+        u.srv.posts.clear()
+        u.lauf([u.konfig_befehl(2, maskieren(u.text).replace('"Alt"', '"Neu"'))])
+        self.assertIn('name = "Neu"', u.pfad.read_text())
+        self.assertIn("[notizen]", u.pfad.read_text())
+
+    def test_abgelehnt_solange_freigabe_aussteht(self):
+        wr = lambda letzte, fehler=None: types.SimpleNamespace(letzte_w=letzte, nenn_w=60000.0, fehler=fehler)  # noqa: E731
+        abr = lambda unbekannt, *w: types.SimpleNamespace(aktiv=False, modus="auto", unbekannt=unbekannt, wr=list(w))  # noqa: E731
+        for nr, zustand in enumerate((abr(True, wr(None)), abr(False, wr(60000.0), wr(30000.0)),
+                                      abr(False, wr(60000.0, "Zeitüberschreitung")), abr(False, wr(0.0))), 1):
+            u = Umgebung(self)
+            u.state.abregelung = zustand
+            self._abgelehnt(u, u.konfig_befehl(nr, maskieren(u.text).replace('"Alt"', '"Neu"')),
+                            "Freigabe eines Wechselrichters steht noch aus")
+            u.srv.posts.clear()
+            u.lauf([{"id": ID(50 + nr), "art": "update"}])
+            self.assertRegex(u.quittungen()[0][2], "Freigabe")
+            self.assertFalse((u.d / "update-anfrage").exists())
+        for zustand in (abr(False, wr(None)), abr(False, wr(60000.0), wr(60000.0)), abr(False)):
+            u = Umgebung(self)
+            u.state.abregelung = zustand                                          # freigegeben bzw. nie begrenzt
+            u.lauf([u.konfig_befehl(1, maskieren(u.text).replace('"Alt"', '"Neu"'))])
+            self.assertEqual(u.neustarts, 1)
 
     def test_lokales_speichern_bleibt_ohne_fernregeln(self):
         u = Umgebung(self)
@@ -342,6 +441,25 @@ class AblaufTests(unittest.TestCase):
         u.lauf([{"id": ID(nr), "art": "neustart"} for nr in range(1, 9)])
         self.assertEqual(len(u.quittungen()), 5)                                  # nur die ersten fünf beachtet
         self.assertTrue(all(not ok and "Unbekannter Befehl" in text for _b, ok, text in u.quittungen()))
+
+    def test_zustand_nicht_schreibbar_nichts_ausgefuehrt_alle_quittiert(self):
+        from solarmaa_dash import fernwartung
+        u = Umgebung(self)
+        m = maskieren(u.text)
+        with mock.patch.object(fernwartung, "_schreiben", side_effect=OSError("Platte voll")), \
+                self.assertLogs("solarmaa_dash", level=logging.ERROR) as logs:
+            u.fw.verarbeiten([u.konfig_befehl(1, m.replace('"Alt"', '"Eins"')), {"id": ID(2), "art": "update"},
+                              {"id": ID(3), "art": "update"}])
+            u.fw.nachlauf()
+        self.assertEqual(u.pfad.read_text(), u.text)                              # nichts ausgeführt
+        self.assertEqual(u.neustarts, 0)
+        self.assertFalse((u.d / "update-anfrage").exists())
+        self.assertIsNone(u.fw.z["wartend"])
+        self.assertEqual([(b, ok) for b, ok, _t in u.quittungen()], [(ID(1), False), (ID(2), False), (ID(3), False)])
+        self.assertTrue(all("nicht schreibbar" in t for _b, _ok, t in u.quittungen()))
+        self.assertTrue(any("nicht schreibbar" in z for z in logs.output))
+        u.fw.verarbeiten([u.konfig_befehl(1, m.replace('"Alt"', '"Eins"'))])      # auch später nicht doch noch
+        self.assertEqual(u.pfad.read_text(), u.text)
 
     def test_quittung_bleibt_bei_portalfehler_liegen(self):
         u = Umgebung(self, routen={})                                             # Portal antwortet mit 404
@@ -539,6 +657,19 @@ class PortalVerbindenTests(unittest.TestCase):
             self.assertEqual(cfg["portal"]["token"], "a" * 48)
             self.assertEqual(pfad.read_text().count("[portal]"), 1)
             self.assertTrue(Portal(cfg).fernwartung)
+            self.assertIn("# Fernwartung durch Solarmaa (auf false setzen, wenn nicht vereinbart)\nfernwartung = true\n",
+                          pfad.read_text())
+        # ein bewusst gesetztes false bleibt beim erneuten Verbinden erhalten
+        for false_zeile in ("fernwartung = false", "  fernwartung=false   # nicht vereinbart"):
+            pfad = Path(tempfile.mkdtemp()) / "config.toml"
+            pfad.write_text(f'[anlage]\nname = "X"\n\n[portal]\nurl = "https://alt.example"\n{false_zeile}\ntoken = "alt"\n'
+                            '\n[server]\nport = 80\n', encoding="utf-8")
+            subprocess.run([sys.executable, "-", str(pfad), "https://x.supabase.co", "sb_publishable_x", "a" * 48],
+                           input=teil, text=True, check=True)
+            cfg = config.load(pfad)
+            self.assertIs(cfg["portal"]["fernwartung"], False)
+            self.assertEqual(cfg["portal"]["token"], "a" * 48)
+            self.assertEqual(cfg["server"]["port"], 80)
 
 
 class HochladenTests(unittest.TestCase):
