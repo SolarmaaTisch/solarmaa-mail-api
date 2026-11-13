@@ -10,7 +10,7 @@
   const fmtW = (w) => (w == null ? "–" : Math.abs(w) < 1000 ? `${nf0.format(Math.abs(w))} W` : `${nf1.format(Math.abs(w) / 1000)} kW`);
   const kwh = (wh) => (wh == null ? "–" : (Math.abs(wh) < 100000 ? nf1 : nf0).format(wh / 1000));
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const COLS = "id,name,ort,kwp,letzter_kontakt,version,live,heute,status,stoerung,abregelung,alarme";
+  const COLS = "id,name,ort,kwp,letzter_kontakt,version,live,heute,status,stoerung,abregelung,alarme,fernwartung";
   const ONLINE_S = 300;
 
   /* ------------------------------------------------------------ Sitzung */
@@ -49,7 +49,8 @@
     const inApp = view === "vList" || view === "vPlant";
     $("logout").hidden = !inApp; $("who").hidden = !inApp;
     if (inApp) $("who").textContent = sess?.email || "";
-    clearInterval(timer);
+    clearInterval(timer); clearInterval(fern.timer);
+    if (view !== "vPlant") fernLeeren();
     if (view === "vList") timer = setInterval(() => loadList().catch(onErr), 30000);
     if (view === "vPlant") timer = setInterval(() => loadPlant(current, false).catch(onErr), 30000);
     window.scrollTo(0, 0);
@@ -114,7 +115,9 @@
     drawDay(mw, t0.getTime());
     drawDays(tw, d30);
     $("pAdmin").hidden = !admin;
-    if (admin && first) loadMembers(id);
+    $("pFern").hidden = !admin;
+    if (admin && first) { loadMembers(id); loadFern(id, p).catch(onErr); }
+    else if (admin) { fern.p = p; fernStatus(); }
   }
 
   /* ------------------------------------------------------------ Diagramme */
@@ -173,9 +176,14 @@
       try { await rpc("mitglied_setzen", { p_anlage: id, p_email: b.dataset.mail, p_entfernen: true }); loadMembers(id); } catch (e) { showErr("memErr", e); }
     }));
   }
-  function showErr(id, e) { const n = $(id); n.textContent = e.message; n.hidden = false; }
+  function showErr(id, e) {
+    const n = $(id);
+    // Die Datenbank verlangt für heikle Aktionen eine Zwei-Faktor-Anmeldung: verständlich weiterleiten
+    n.textContent = /Zwei-Faktor/i.test(e.message || "") ? "Dafür ist eine Zwei-Faktor-Anmeldung nötig. Bitte unten bei «Fernwartung» den Zwei-Faktor einrichten bzw. bestätigen und dann erneut versuchen." : e.message;
+    n.hidden = false;
+  }
   function showToken(name, tok) {
-    $("tokenText").textContent = `[portal]\nurl = "${URL_}"\nschluessel = "${KEY}"\ntoken = "${tok}"\n`;
+    $("tokenText").textContent = `[portal]\nurl = "${URL_}"\nschluessel = "${KEY}"\ntoken = "${tok}"\nfernwartung = true\n`;
     $("tokenBox").hidden = false; $("tokenBox").querySelector("h2").textContent = `Pi-Token für «${name}»`;
     $("tokenBox").scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -199,7 +207,7 @@
   $("tokenNew").addEventListener("click", async () => {
     const b = $("tokenNew");
     if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Wirklich? Der alte Token wird ungültig."; return; }
-    b.dataset.sure = ""; b.textContent = "Neuen Pi-Token erzeugen";
+    b.dataset.sure = ""; b.textContent = "Neuen Pi-Token erzeugen"; $("memErr").hidden = true;
     try { const r = await rpc("anlage_token_neu", { p_anlage: current }); const p = plants.find((x) => x.id === current); show("vList"); await loadList(); showToken(p?.name || "", r.token); }
     catch (e) { showErr("memErr", e); }
   });
@@ -207,6 +215,151 @@
     ev.preventDefault(); $("memErr").hidden = true;
     try { await rpc("mitglied_setzen", { p_anlage: current, p_email: $("mEmail").value.trim(), p_entfernen: false }); $("mEmail").value = ""; loadMembers(current); }
     catch (e) { showErr("memErr", e); }
+  });
+
+  /* ------------------------------------------------------------ Fernwartung (Admin mit Zwei-Faktor) */
+  // Die Datenbank prüft jede Aktion selbst (Admin + Zwei-Faktor). Hier wird nur angezeigt und gesendet.
+  const fern = { id: null, p: null, orig: null, faktor: null, timer: null };
+  function aal() {
+    try {
+      const t = sess.access.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      return JSON.parse(atob(t + "=".repeat((4 - (t.length % 4)) % 4))).aal || "";
+    } catch (e) { return ""; }
+  }
+  const zeit = (t) => (t ? new Date(t).toLocaleString(L, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
+  const sure = (b, frage, text) => { if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = frage; return false; } b.dataset.sure = ""; b.textContent = text; return true; };
+  function mfaLeeren() {
+    // Schlüssel und QR-Code der Zwei-Faktor-Einrichtung nie länger als nötig im Dokument lassen
+    $("mfaSecret").textContent = ""; $("mfaQr").removeAttribute("src");
+    $("mfaCode").value = ""; $("mfaEnrollCode").value = "";
+    $("mfaEnroll").hidden = true; $("mfaErr").hidden = true;
+    fern.faktor = null;
+  }
+  function fernLeeren() {
+    clearInterval(fern.timer);
+    fern.id = null; fern.p = null; fern.orig = null;
+    mfaLeeren();
+    $("fernKonfig").value = ""; $("fernKonfig").hidden = true; $("fernKonfigSenden").hidden = true;
+    ["fernBefehle", "fernStand", "fernMsg", "fernErr", "fernHinweis"].forEach((id) => { $(id).textContent = ""; });
+    $("fernMsg").hidden = true; $("fernErr").hidden = true;
+    [["fernUpdate", "Update auslösen"], ["fernKonfigSenden", "Konfiguration senden"]].forEach(([id, text]) => { $(id).dataset.sure = ""; $(id).textContent = text; });
+  }
+  function fernStatus() {
+    const p = fern.p, ok2 = aal() === "aal2";
+    if (!p) return;
+    const grund = !ok2 ? "Fernwartung ist erst nach der Zwei-Faktor-Bestätigung möglich."
+      : !p.fernwartung ? "Fernwartung ist auf dieser Anlage ausgeschaltet. Einschalten nur vor Ort: in der Konfiguration des Pi unter [portal] die Zeile fernwartung = true ergänzen (ab Software 1.6.0)."
+      : !online(p) ? "Die Anlage ist offline. Befehle sind erst wieder möglich, wenn sich der Pi meldet." : "";
+    $("fernHinweis").textContent = grund; $("fernHinweis").hidden = !grund;
+    ["fernUpdate", "fernKonfigLaden", "fernKonfigSenden"].forEach((id) => { $(id).disabled = !!grund; });
+  }
+  async function loadMfa() {
+    const ok2 = aal() === "aal2";
+    $("mfaOk").hidden = !ok2; $("fMfa").hidden = true; $("mfaNeu").hidden = true;
+    if (ok2) return;
+    const u = await raw("/auth/v1/user", {}, await token());
+    fern.faktor = ((u && u.factors) || []).find((f) => (f.factor_type || "totp") === "totp" && f.status === "verified") || null;
+    $("fMfa").hidden = !fern.faktor; $("mfaNeu").hidden = !!fern.faktor || !$("mfaEnroll").hidden;
+  }
+  async function mfaPruefen(faktorId, code) {
+    if (!/^\d{6}$/.test(code)) throw new Error("Bitte den 6-stelligen Code eingeben");
+    const tok = await token();
+    const ch = await raw(`/auth/v1/factors/${encodeURIComponent(faktorId)}/challenge`, { method: "POST", body: "{}" }, tok);
+    let d;
+    try { d = await raw(`/auth/v1/factors/${encodeURIComponent(faktorId)}/verify`, { method: "POST", body: JSON.stringify({ challenge_id: ch.id, code }) }, tok); }
+    catch (e) { throw e.status === 401 ? e : new Error("Code falsch oder abgelaufen. Bitte den aktuellen Code aus der App eingeben."); }
+    if (!d || !d.access_token) throw new Error("Bestätigung fehlgeschlagen");
+    setSess(d);
+    mfaLeeren();
+    await loadMfa(); fernStatus(); loadBefehle().catch(onErr);
+  }
+  $("fMfa").addEventListener("submit", async (ev) => {
+    ev.preventDefault(); $("mfaErr").hidden = true;
+    try { await mfaPruefen(fern.faktor.id, $("mfaCode").value.trim()); } catch (e) { $("mfaCode").value = ""; showErr("mfaErr", e); onErr(e); }
+  });
+  $("mfaSetup").addEventListener("click", async () => {
+    $("mfaErr").hidden = true;
+    try {
+      const tok = await token();
+      const u = await raw("/auth/v1/user", {}, tok);
+      // angefangene, nie bestätigte Einrichtungen entfernen
+      for (const f of ((u && u.factors) || []).filter((x) => x.status !== "verified")) await raw(`/auth/v1/factors/${encodeURIComponent(f.id)}`, { method: "DELETE" }, tok);
+      const d = await raw("/auth/v1/factors", { method: "POST", body: JSON.stringify({ factor_type: "totp", friendly_name: "Solarmaa Portal" }) }, tok);
+      const qr = (d.totp && d.totp.qr_code) || "";
+      fern.faktor = { id: d.id, neu: true };
+      $("mfaQr").src = qr.startsWith("data:") ? qr : "data:image/svg+xml;utf8," + encodeURIComponent(qr);
+      $("mfaSecret").textContent = (d.totp && d.totp.secret) || "";
+      $("mfaNeu").hidden = true; $("mfaEnroll").hidden = false; $("mfaEnrollCode").focus();
+    } catch (e) { showErr("mfaErr", e); onErr(e); }
+  });
+  $("mfaEnroll").addEventListener("submit", async (ev) => {
+    ev.preventDefault(); $("mfaErr").hidden = true;
+    try { await mfaPruefen(fern.faktor.id, $("mfaEnrollCode").value.trim()); } catch (e) { $("mfaEnrollCode").value = ""; showErr("mfaErr", e); onErr(e); }
+  });
+
+  const ART = { update: "Update", konfig: "Konfiguration" };
+  function befehlStand(b) {
+    const alt = (t, min) => t && Date.now() - new Date(t).getTime() > min * 60000;
+    if (b.status === "offen") return alt(b.erstellt, 60) ? ["off", "verfallen"] : ["cur", "wartet auf den Pi"];
+    if (b.status === "gesendet") return alt(b.gesendet_am, 45) ? ["warn", "keine Quittung"] : ["cur", "abgeholt, läuft"];
+    if (b.status === "erledigt") return ["ok", "erledigt"];
+    if (b.status === "fehler") return ["bad", "fehler"];
+    return ["off", "verfallen"];
+  }
+  async function loadBefehle() {
+    const id = fern.id;
+    if (!id) return;
+    const rows = await get(`befehle?select=id,art,status,ergebnis,erstellt,erstellt_von,gesendet_am,erledigt_am&anlage_id=eq.${encodeURIComponent(id)}&order=erstellt.desc&limit=20`);
+    if (fern.id !== id) return;
+    // nutzlast wird nie angefordert (gesperrt); ergebnis kommt vom Pi und wird nur als Text eingesetzt
+    $("fernBefehle").innerHTML = rows.map((b) => { const [cls, text] = befehlStand(b); return `<li><span class="cmd"><b>${esc(ART[b.art] || b.art)}</b><span class="pill ${cls}">${esc(text)}</span><br><span class="muted small">${esc(zeit(b.erstellt))}${b.erstellt_von ? ` · ${esc(b.erstellt_von)}` : ""}${b.erledigt_am ? ` · quittiert ${esc(zeit(b.erledigt_am))}` : ""}</span>${b.ergebnis ? `<span class="cmd-res">${esc(b.ergebnis)}</span>` : ""}</span></li>`; }).join("") || '<li class="muted">Noch kein Befehl gesendet</li>';
+    clearInterval(fern.timer);
+    const laeuft = rows.some((b) => { const s = befehlStand(b)[1]; return s === "wartet auf den Pi" || s === "abgeholt, läuft"; });
+    if (laeuft) fern.timer = setInterval(() => loadBefehle().catch(onErr), 10000);
+  }
+  async function loadFern(id, p) {
+    fernLeeren();
+    fern.id = id; fern.p = p;
+    fernStatus();
+    await loadMfa(); fernStatus();
+    await loadBefehle();
+  }
+  async function sha256(text) {
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  const fernMsg = (text) => { $("fernMsg").textContent = text; $("fernMsg").hidden = !text; };
+  $("fernUpdate").addEventListener("click", async () => {
+    const b = $("fernUpdate");
+    if (!sure(b, "Wirklich? Der Dienst auf dem Pi startet neu.", "Update auslösen")) return;
+    $("fernErr").hidden = true; fernMsg("");
+    try { await rpc("befehl_anlegen", { p_anlage: fern.id, p_art: "update" }); fernMsg("Update angefordert. Der Pi holt den Befehl bei seiner nächsten Meldung ab (etwa eine Minute)."); await loadBefehle(); }
+    catch (e) { showErr("fernErr", e); onErr(e); }
+  });
+  $("fernKonfigLaden").addEventListener("click", async () => {
+    $("fernErr").hidden = true; fernMsg("");
+    try {
+      const id = fern.id, rows = await get(`anlagen_konfig?select=text,stand&anlage_id=eq.${encodeURIComponent(id)}`);
+      if (fern.id !== id) return;
+      const k = rows[0];
+      fern.orig = k && k.text ? k.text : null;
+      $("fernKonfig").value = fern.orig || ""; $("fernKonfig").hidden = !fern.orig; $("fernKonfigSenden").hidden = !fern.orig;
+      $("fernStand").textContent = fern.orig ? `Stand ${zeit(k.stand)}` : "";
+      if (!fern.orig) fernMsg("Der Pi hat keine Konfiguration übertragen (Fernwartung auf dem Pi aus, oder er hat sich seit dem Einschalten noch nicht gemeldet).");
+    } catch (e) { showErr("fernErr", e); onErr(e); }
+  });
+  $("fernKonfigSenden").addEventListener("click", async () => {
+    const b = $("fernKonfigSenden");
+    if (!fern.orig) return;
+    if (!sure(b, "Wirklich senden? Der Dienst auf dem Pi startet neu.", "Konfiguration senden")) return;
+    $("fernErr").hidden = true; fernMsg("");
+    try {
+      // basis = Stand, der hier geladen wurde: Der Pi lehnt ab, wenn seine Datei inzwischen anders ist
+      await rpc("befehl_anlegen", { p_anlage: fern.id, p_art: "konfig", p_nutzlast: { text: $("fernKonfig").value, basis: await sha256(fern.orig) } });
+      fern.orig = null; $("fernKonfig").value = ""; $("fernKonfig").hidden = true; b.hidden = true; $("fernStand").textContent = "";
+      fernMsg("Gesendet. Der Pi prüft die Konfiguration, speichert sie und startet neu. Das Ergebnis erscheint unten.");
+      await loadBefehle();
+    } catch (e) { showErr("fernErr", e); onErr(e); }
   });
 
   /* ------------------------------------------------------------ Anmeldung */
@@ -245,8 +398,9 @@
     try { await raw("/auth/v1/logout", { method: "POST" }, sess?.access); } catch (e) { /* egal */ }
     setSess(null); plants = []; current = null; admin = false;
     // nichts vom vorherigen Konto im Dokument stehen lassen
-    ["plants", "members", "summary", "pNow", "pToday", "tokenText"].forEach((id) => { $(id).textContent = ""; });
+    ["plants", "members", "summary", "pNow", "pToday", "tokenText", "pName", "pMeta", "pAlarm", "pCurtail", "chDay", "chDays", "who", "memErr"].forEach((id) => { $(id).textContent = ""; });
     $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true;
+    fernLeeren(); $("pFern").hidden = true;
     show("vLogin");
   });
   $("back").addEventListener("click", () => { current = null; show("vList"); loadList().catch(onErr); });

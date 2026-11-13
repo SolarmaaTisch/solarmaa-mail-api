@@ -65,7 +65,7 @@
     </form>
     <div class="card" id="tokenBox" hidden>
       <h2>Anlage angelegt</h2>
-      <p>Diesen Block auf dem Pi unter Wartung → Konfiguration ans Ende einfügen. <b>Der Token wird nur jetzt angezeigt.</b></p>
+      <p>Diesen Block auf dem Pi unter Wartung → Konfiguration ans Ende einfügen. <b>Der Token wird nur jetzt angezeigt.</b> Die Zeile <code>fernwartung = true</code> erlaubt Solarmaa Update und Konfiguration über das Portal; ohne sie bleibt die Fernwartung aus.</p>
       <pre id="tokenText"></pre>
       <div class="row"><button class="btn primary" id="tokenCopy">Kopieren</button><button class="btn ghost" id="tokenClose">Fertig</button></div>
     </div>
@@ -99,6 +99,47 @@
       <p class="muted small">Das Konto muss vorher in Supabase unter Authentication → Users eingeladen sein.</p>
       <p class="err" id="memErr" role="alert" hidden></p>
       <div class="row mt"><button class="btn ghost" id="tokenNew">Neuen Pi-Token erzeugen</button></div>
+    </div>
+    <div class="card" id="pFern" hidden>
+      <h2>Fernwartung</h2>
+      <div id="mfaBox">
+        <p id="mfaOk" hidden><span class="pill ok">Zwei-Faktor bestätigt</span></p>
+        <form id="fMfa" hidden novalidate>
+          <label for="mfaCode">Zwei-Faktor: Code aus der Authenticator-App</label>
+          <div class="row">
+            <input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 Ziffern">
+            <button class="btn primary" type="submit">Bestätigen</button>
+          </div>
+        </form>
+        <div id="mfaNeu" hidden>
+          <p class="muted">Fernwartung, «Neuen Pi-Token erzeugen» und das Löschen einer Anlage verlangen eine Zwei-Faktor-Anmeldung. Für dieses Konto ist noch keine eingerichtet.</p>
+          <button class="btn primary" id="mfaSetup" type="button">Zwei-Faktor einrichten</button>
+        </div>
+        <form id="mfaEnroll" hidden novalidate>
+          <p>Diesen QR-Code mit einer Authenticator-App scannen (oder den Schlüssel von Hand eintragen), dann den angezeigten Code eingeben.</p>
+          <img id="mfaQr" class="qr" alt="QR-Code" width="200" height="200">
+          <p class="small">Schlüssel: <code id="mfaSecret"></code></p>
+          <label for="mfaEnrollCode">Code aus der App</label>
+          <div class="row">
+            <input id="mfaEnrollCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 Ziffern">
+            <button class="btn primary" type="submit">Aktivieren</button>
+          </div>
+        </form>
+        <p class="err" id="mfaErr" role="alert" hidden></p>
+      </div>
+      <p class="muted" id="fernHinweis" hidden></p>
+      <h3>Update</h3>
+      <p class="muted small">Holt die freigegebene Programmversion auf den Pi. Der Dienst startet dabei neu.</p>
+      <div class="row"><button class="btn ghost" id="fernUpdate" type="button" disabled>Update auslösen</button></div>
+      <h3>Konfiguration</h3>
+      <p class="muted small">Geheime Werte erscheinen als ********. Unverändert gelassen, bleiben sie auf dem Pi erhalten. Nur vor Ort änderbar: [portal], [server], [daten] und der Demo-Modus.</p>
+      <div class="row"><button class="btn ghost" id="fernKonfigLaden" type="button" disabled>Konfiguration laden</button><span class="muted small" id="fernStand"></span></div>
+      <textarea id="fernKonfig" class="mono" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Konfiguration des Pi" hidden></textarea>
+      <div class="row mt"><button class="btn primary" id="fernKonfigSenden" type="button" hidden>Konfiguration senden</button></div>
+      <p class="muted small" id="fernMsg" role="status" hidden></p>
+      <p class="err" id="fernErr" role="alert" hidden></p>
+      <h3>Letzte Befehle</h3>
+      <ul class="list" id="fernBefehle"></ul>
     </div>
   </section>
 </main>

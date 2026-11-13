@@ -10,6 +10,7 @@
     --c-home: #c99ae6; --c-grid: #9aa8e8; --c-bat: #a9d97c; --ok: #8fd16a; --warn: #ff8f3d; color-scheme: dark; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--font); font-variant-numeric: tabular-nums; }
 h1 { font-size: 1.4rem; margin: 0; letter-spacing: -0.02em; }
 h2 { font-size: 1.02rem; margin: 26px 0 10px; }
@@ -68,3 +69,17 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--violet); ou
 .list li { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 6px; overflow-wrap: anywhere; }
 pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow: auto; font-size: 0.8rem; }
 #pAdmin { margin-top: 26px; }
+/* Fernwartung */
+#pFern { margin-top: 18px; }
+h3 { font-size: 0.94rem; margin: 20px 0 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+textarea { font: inherit; }
+textarea.mono { display: block; width: 100%; min-height: 320px; margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; line-height: 1.4;
+  white-space: pre; overflow: auto; resize: vertical; tab-size: 2; }
+textarea[hidden] { display: none; }
+textarea:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.qr { display: block; width: 200px; height: 200px; max-width: 100%; background: #fff; padding: 8px; border-radius: 10px; margin: 10px 0; }
+.cmd { flex: 1 1 100%; min-width: 0; }
+.cmd .pill { margin-left: 6px; } .pill.warn { color: var(--warn); }
+.cmd-res { display: block; font-size: 0.86rem; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 9em; overflow: auto; }
