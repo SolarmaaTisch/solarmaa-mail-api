@@ -4,6 +4,8 @@
   "use strict";
   const { url: URL_, key: KEY } = window.PORTAL;
   const $ = (id) => document.getElementById(id);
+  // Ausgangszustand der Seite (hidden/disabled/Beschriftung): Abmelden stellt genau diesen wieder her
+  const AUSGANG = [...document.querySelectorAll("[id]")].map((n) => [n, n.hidden, n.disabled, n.tagName === "BUTTON" ? n.textContent : null]);
   const L = "de-CH";
   const nf0 = new Intl.NumberFormat(L, { maximumFractionDigits: 0 });
   const nf1 = new Intl.NumberFormat(L, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -19,6 +21,9 @@
   // einem await prüft, ob sie noch zur angezeigten Ansicht bzw. Anmeldung gehört, und bricht sonst ab.
   // So kann eine verspätete Antwort nie die falsche Anlage füllen oder nach dem Abmelden etwas anzeigen.
   let marke = 0, anm = 0;
+  // anlage: die Anlage, deren Daten gerade angezeigt werden (von loadPlant bestätigt). Verwaltung und
+  // Fernwartung handeln nur für diese Anlage; bis sie bestätigt ist, ist die Ansicht leer und gesperrt.
+  let anlage = null;
   const store = {
     load() { try { return JSON.parse(localStorage.getItem("sm_portal") || "null"); } catch (e) { return null; } },
     save(s) { try { s ? localStorage.setItem("sm_portal", JSON.stringify(s)) : localStorage.removeItem("sm_portal"); } catch (e) { /* privat */ } },
@@ -32,19 +37,29 @@
     if (!r.ok) throw new ApiError(r.status, (data && (data.msg || data.message || data.error_description || data.error)) || `Fehler ${r.status}`);
     return data;
   }
+  let sessNr = 0, erneuerung = null;
   function setSess(d) {
+    sessNr++;
     sess = d ? { access: d.access_token, refresh: d.refresh_token, exp: Date.now() + (d.expires_in || 3600) * 1000, email: d.user?.email || sess?.email } : null;
     store.save(sess);
   }
   async function token() {
     if (!sess) throw new ApiError(401, "Bitte anmelden");
     if (Date.now() > sess.exp - 60000) {
-      const a = anm;
-      let d;
-      try { d = await raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: sess.refresh }) }); }
-      catch (e) { if (a === anm) setSess(null); throw new ApiError(401, "Sitzung abgelaufen"); }
-      if (a !== anm || !sess) throw new ApiError(401, "Bitte anmelden");      // inzwischen abgemeldet: Sitzung nicht wiederbeleben
-      setSess(d);
+      // Nur eine Erneuerung gleichzeitig; alle Aufrufer warten auf dieselbe. Wurde die Sitzung inzwischen
+      // ersetzt (Abmelden, Zwei-Faktor bestätigt), wird das Ergebnis verworfen: Eine ältere Erneuerung
+      // darf eine aal2-Sitzung nie mit aal1 überschreiben und eine abgemeldete nie wiederbeleben.
+      if (!erneuerung) {
+        const nr = sessNr, a = anm;
+        erneuerung = (async () => {
+          let d;
+          try { d = await raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: sess.refresh }) }); }
+          catch (e) { if (nr === sessNr && a === anm) setSess(null); throw new ApiError(401, "Sitzung abgelaufen"); }
+          if (nr === sessNr && a === anm && sess) setSess(d);
+        })().finally(() => { erneuerung = null; });
+      }
+      await erneuerung;
+      if (!sess) throw new ApiError(401, "Bitte anmelden");
     }
     return sess.access;
   }
@@ -53,7 +68,7 @@
 
   /* ------------------------------------------------------------ Ansichten */
   function show(view) {
-    marke++; sureReset();
+    marke++; sureReset(); anlageLeeren();
     ["vLogin", "vNewPw", "vList", "vPlant"].forEach((v) => { $(v).hidden = v !== view; });
     const inApp = view === "vList" || view === "vPlant";
     $("logout").hidden = !inApp; $("who").hidden = !inApp;
@@ -90,6 +105,13 @@
     if (!admin && plants.length === 1 && !current) openPlant(plants[0].id);
   }
 
+  function anlageLeeren() {
+    anlage = null;
+    ["pName", "pMeta", "pNow", "pToday", "chDay", "chDays", "members", "memErr", "pAlarm", "pCurtail"].forEach((id) => { $(id).textContent = ""; });
+    $("pState").textContent = ""; $("pState").className = "pill";
+    ["pAlarm", "pCurtail", "pAdmin", "pFern", "memErr"].forEach((id) => { $(id).hidden = true; });
+    $("mEmail").value = "";
+  }
   async function openPlant(id) { current = id; show("vPlant"); await loadPlant(id, true).catch(onErr); }
 
   async function loadPlant(id, first) {
@@ -97,6 +119,7 @@
     if (m !== marke || current !== id) return;         // inzwischen andere Ansicht, andere Anlage oder abgemeldet
     const p = rows[0];
     if (!p) { current = null; show("vList"); return loadList(); }
+    anlage = id;
     $("pAdmin").hidden = !admin;
     const l = online(p) ? p.live || {} : {}, h = p.heute || {};
     $("pName").textContent = p.name;
@@ -129,7 +152,7 @@
     drawDays(tw, d30);
     $("pAdmin").hidden = !admin;
     $("pFern").hidden = !admin;
-    if (admin && first) { loadMembers(id); loadFern(id, p).catch(onErr); }
+    if (admin && first) { loadMembers(id).catch((e) => fehlerBei(m, "memErr", e)); loadFern(id, p).catch(onErr); }
     else if (admin && fernId() === id) { fern.p = p; fernStatus(); }
   }
 
@@ -184,13 +207,16 @@
   /* ------------------------------------------------------------ Verwaltung (Admin) */
   async function loadMembers(id) {
     const mk = marke, m = await get(`mitglieder?select=email,user_id&anlage_id=eq.${encodeURIComponent(id)}&order=email`);
-    if (mk !== marke || current !== id) return;
-    $("members").innerHTML = m.map((x) => `<li><span>${esc(x.email)}</span><button class="btn ghost" data-mail="${esc(x.email)}">Entfernen</button></li>`).join("") || '<li class="muted">Noch kein Kunde zugeordnet</li>';
+    if (mk !== marke || anlage !== id) return;
+    $("members").innerHTML = m.map((x) => `<li><span>${esc(x.email)}</span><button class="btn ghost" data-mail="${esc(x.email)}" data-anlage="${esc(id)}">Entfernen</button></li>`).join("") || '<li class="muted">Noch kein Kunde zugeordnet</li>';
     $("members").querySelectorAll("button").forEach((b) => b.addEventListener("click", async () => {
       const mk2 = marke;
-      try { await rpc("mitglied_setzen", { p_anlage: id, p_email: b.dataset.mail, p_entfernen: true }); if (mk2 === marke) loadMembers(id).catch(onErr); } catch (e) { if (mk2 === marke) showErr("memErr", e); onErr(e); }
+      if (b.dataset.anlage !== anlage || anlage !== id) return;      // Knopf gehört nicht (mehr) zur angezeigten Anlage
+      try { await rpc("mitglied_setzen", { p_anlage: id, p_email: b.dataset.mail, p_entfernen: true }); if (mk2 === marke) loadMembers(id).catch((e) => fehlerBei(mk2, "memErr", e)); } catch (e) { fehlerBei(mk2, "memErr", e); }
     }));
   }
+  // Fehler einer Hintergrundabfrage: 401 meldet ab, sonst Meldung, sofern die Ansicht noch dieselbe ist
+  function fehlerBei(m, ziel, e) { onErr(e); if (e.status !== 401 && m === marke) showErr(ziel, e); }
   function showErr(id, e) {
     const n = $(id);
     // Die Datenbank verlangt für heikle Aktionen eine Zwei-Faktor-Anmeldung: verständlich weiterleiten
@@ -212,8 +238,10 @@
     const a = anm;
     try {
       const r = await rpc("anlage_anlegen", { p_name: name, p_ort: $("aOrt").value.trim(), p_kwp: parseFloat($("aKwp").value.replace(",", ".")) || 0 });
-      if (a !== anm) return;                             // inzwischen abgemeldet: Token nicht mehr anzeigen
-      $("fAdd").hidden = true; $("fAdd").reset(); showToken(name, r.token); loadList().catch(onErr);
+      if (a !== anm || !sess) return;                    // inzwischen abgemeldet: Token nicht mehr anzeigen
+      current = null; if ($("vList").hidden) show("vList");
+      $("fAdd").hidden = true; $("fAdd").reset(); showToken(name, r.token);
+      loadList().catch(onErr);                           // scheitert die Liste, bleibt der Token trotzdem stehen
     } catch (e) { if (a === anm) showErr("addErr", e); onErr(e); }
   });
   $("tokenCopy").addEventListener("click", async () => {
@@ -222,22 +250,25 @@
   });
   $("tokenClose").addEventListener("click", () => { $("tokenBox").hidden = true; $("tokenText").textContent = ""; $("tokenCopy").textContent = "Kopieren"; });
   $("tokenNew").addEventListener("click", async () => {
-    const id = current;
+    const id = anlage;
     if (!id || !sure("tokenNew", "Wirklich? Der alte Token wird ungültig.")) return;
     $("memErr").hidden = true;
-    const a = anm, m = marke, name = plants.find((x) => x.id === id)?.name || "";
-    try {
-      const r = await rpc("anlage_token_neu", { p_anlage: id });
-      if (a !== anm) return;                             // inzwischen abgemeldet
-      current = null; show("vList"); await loadList(); showToken(name, r.token);
-    } catch (e) { if (m === marke) showErr("memErr", e); onErr(e); }
+    const a = anm, m = marke, name = plants.find((x) => x.id === id)?.name || $("pName").textContent;
+    let r;
+    try { r = await rpc("anlage_token_neu", { p_anlage: id }); }
+    catch (e) { fehlerBei(m, "memErr", e); return; }
+    // Abgemeldet: Token nie mehr ins Dokument schreiben. Sonst sofort zeigen, auch wenn inzwischen eine
+    // andere Ansicht offen ist: Der alte Token gilt nicht mehr, ohne diesen wäre der Pi ausgesperrt.
+    if (a !== anm || !sess) return;
+    current = null; show("vList"); showToken(name, r.token);
+    loadList().catch(onErr);                             // scheitert die Liste, bleibt der Token trotzdem stehen
   });
   $("fMember").addEventListener("submit", async (ev) => {
     ev.preventDefault(); $("memErr").hidden = true;
-    const id = current, m = marke;
-    if (!id) return;
-    try { await rpc("mitglied_setzen", { p_anlage: id, p_email: $("mEmail").value.trim(), p_entfernen: false }); if (m !== marke) return; $("mEmail").value = ""; loadMembers(id).catch(onErr); }
-    catch (e) { if (m === marke) showErr("memErr", e); onErr(e); }
+    const id = anlage, m = marke;
+    if (!id) return;                                     // Anlage noch nicht geladen: nichts senden
+    try { await rpc("mitglied_setzen", { p_anlage: id, p_email: $("mEmail").value.trim(), p_entfernen: false }); if (m !== marke) return; $("mEmail").value = ""; loadMembers(id).catch((e) => fehlerBei(m, "memErr", e)); }
+    catch (e) { fehlerBei(m, "memErr", e); }
   });
 
   /* ------------------------------------------------------------ Fernwartung (Admin mit Zwei-Faktor) */
@@ -246,7 +277,7 @@
   // nachdem loadPlant() bestätigt hat, dass diese Anlage angezeigt wird; fern.origId hält fest, zu
   // welcher Anlage die geladene Konfiguration gehört.
   const fern = { id: null, p: null, orig: null, origId: null, faktor: null, timer: null };
-  const fernId = () => (fern.id && fern.id === current ? fern.id : null);
+  const fernId = () => (fern.id && fern.id === anlage && anlage === current ? fern.id : null);
   function aal() {
     try {
       const t = sess.access.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -267,7 +298,7 @@
     mfaLeeren();
     $("fernKonfig").value = ""; $("fernKonfig").hidden = true; $("fernKonfigSenden").hidden = true;
     ["fernBefehle", "fernStand", "fernMsg", "fernErr", "fernHinweis"].forEach((id) => { $(id).textContent = ""; });
-    $("fernMsg").hidden = true; $("fernErr").hidden = true;
+    ["fernMsg", "fernErr", "fernHinweis", "mfaOk", "fMfa", "mfaNeu"].forEach((id) => { $(id).hidden = true; });
     sureReset();
     // gesperrt, bis loadFern() die Anlage kennt: Sonst ginge ein Klick ohne Anlage hinaus
     ["fernUpdate", "fernKonfigLaden", "fernKonfigSenden"].forEach((id) => { $(id).disabled = true; });
@@ -360,7 +391,7 @@
   async function loadFern(id, p) {
     const m = marke;
     fernLeeren();
-    if (current !== id || p.id !== id) return;
+    if (anlage !== id || p.id !== id) return;
     fern.id = id; fern.p = p;
     fernStatus();
     await loadMfa();
@@ -466,13 +497,15 @@
   // anm und marke (in show) ändern sich, damit keine noch laufende Abfrage danach etwas einträgt.
   function abmeldenLokal() {
     anm++;
-    setSess(null); plants = []; current = null; admin = false;
+    setSess(null); plants = []; current = null; admin = false; anlage = null;
     ["plants", "members", "summary", "pNow", "pToday", "tokenText", "pName", "pMeta", "pAlarm", "pCurtail", "chDay", "chDays", "who", "memErr"].forEach((id) => { $(id).textContent = ""; });
     $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true; $("fAdd").hidden = true;
     $("pAlarm").hidden = true; $("pCurtail").hidden = true;
     fernLeeren(); $("pFern").hidden = true;
     $("pState").textContent = ""; $("pState").className = "pill";
     ["email", "pw", "mEmail", "npw", "aName", "aOrt", "aKwp"].forEach((id) => { $(id).value = ""; });
+    // alle hidden-, disabled- und Knopfzustände wie beim ersten Laden der Seite
+    AUSGANG.forEach(([n, h, d, t]) => { n.hidden = h; n.disabled = d; if (t !== null) n.textContent = t; });
     show("vLogin");
   }
   $("logout").addEventListener("click", () => {

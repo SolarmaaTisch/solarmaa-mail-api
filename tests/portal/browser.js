@@ -73,6 +73,12 @@ function piRunde(token, ordner = piDir) {
   schritt = "Anmeldung";
   await p.goto(URL_ + "/");
   await p.waitForSelector("#vLogin:not([hidden])");
+  const zustandSeite = () => p.evaluate(() => [...document.querySelectorAll("[id]")].map((e) => `${e.id}:${e.hidden ? "h" : ""}${e.disabled ? "d" : ""}`));
+  const frisch = await zustandSeite();
+  const wieFrisch = async (wo) => {
+    const jetzt = await zustandSeite(), abw = jetzt.filter((z, i) => z !== frisch[i]);
+    ok(`${wo}: hidden/disabled aller Elemente wie auf der frisch geladenen Seite`, jetzt.length === frisch.length && abw.length === 0, JSON.stringify(abw));
+  };
   ok("verstecktes Formular «Neue Anlage» ist unsichtbar", !(await p.isVisible("#fAdd")));
   await p.fill("#email", "chef@solarmaa.ch"); await p.fill("#pw", "falsch"); await p.tap("#loginBtn");
   await p.waitForSelector("#loginErr:not([hidden])");
@@ -207,6 +213,7 @@ function piRunde(token, ordner = piDir) {
   ok("nach dem Abmelden: nichts von der Anlage im Dokument oder Speicher", !/Vom Portal geändert|ablauf-|TESTSECRET|Browser-Anlage|chef@|api_key/.test(rest.html) && rest.speicher === "{}",
     `(gefunden: ${(rest.html.match(/.{30}(Vom Portal geändert|ablauf-|TESTSECRET|Browser-Anlage|chef@|api_key).{30}/s) || [""])[0]}; Speicher: ${rest.speicher})`);
   ok("Karte Fernwartung versteckt", await p.isHidden("#pFern"));
+  await wieFrisch("nach dem Abmelden eines Solarmaa-Kontos mit Zwei-Faktor");
   ok("nach dem Abmelden: Eingabefelder (E-Mail, Kunde) und Zustand der Anlage leer", rest.felder === "" && rest.zustand === "", JSON.stringify([rest.felder, rest.zustand]));
 
   // ---------------------------------------------------------------- Zweite Anmeldung: Code statt Einrichtung
@@ -270,7 +277,28 @@ function piRunde(token, ordner = piDir) {
   await p.tap("#tokenNew"); await zurListe();
   ok("Rückfrage ist auch nach dem Wechsel zur Liste zurückgesetzt", (await p.evaluate(() => document.querySelector("#tokenNew").dataset.sure)) !== "1");
   p.off("request", mitschnitt);
-  await oeffne(A);
+
+  // Mitglieder: Während B lädt, zeigt die Ansicht nichts von A, und nichts geht an die falsche Anlage
+  await oeffne(A); await p.waitForSelector("#members button");
+  await p.evaluate(() => { window.__knopfVonA = document.querySelector("#members button"); });
+  await zurListe();
+  const mitglied = [], merke = (r) => { if (/mitglied_setzen/.test(r.url())) mitglied.push(r.postData()); };
+  p.on("request", merke);
+  const langsamB = new RegExp("/rest/v1/anlagen\\?.*id=eq\\." + bId);
+  await p.route(langsamB, async (route) => { await new Promise((res) => setTimeout(res, 2500)); await route.continue().catch(() => {}); });
+  await p.tap(`.plant:has-text("${B}")`); await p.waitForSelector("#vPlant:not([hidden])");
+  const waehrend = await p.evaluate(() => ({ name: document.getElementById("pName").textContent, members: document.getElementById("members").textContent, admin: document.getElementById("pAdmin").hidden, fern: document.getElementById("pFern").hidden }));
+  ok("während B lädt: nichts von A sichtbar, Verwaltung und Fernwartung versteckt", !waehrend.name.includes(A) && waehrend.members === "" && waehrend.admin && waehrend.fern, JSON.stringify(waehrend));
+  await p.evaluate(() => { document.getElementById("mEmail").value = "fremd@example.ch"; document.getElementById("fMember").requestSubmit(); });
+  await p.waitForFunction((n) => document.querySelector("#pName").textContent === n, B, { timeout: 10000 });
+  await p.unroute(langsamB);
+  await p.waitForSelector("#members li");
+  await p.evaluate(() => window.__knopfVonA.click());                 // alter Knopf «Entfernen» von A
+  await p.waitForTimeout(800);
+  p.off("request", merke);
+  ok("kein Mitglied-Aufruf, solange B lädt oder mit einem Knopf von A", mitglied.length === 0, JSON.stringify(mitglied));
+  ok("Zuordnungen unverändert", sql(`select count(*) from public.mitglieder where anlage_id = '${aId}'`) === "1" && sql(`select count(*) from public.mitglieder where anlage_id = '${bId}'`) === "0");
+  await zurListe(); await oeffne(A);
   await pruefen("zwei Anlagen");
   fs.rmSync(piDirB, { recursive: true, force: true });
 
@@ -334,6 +362,68 @@ function piRunde(token, ordner = piDir) {
     await abmelden();
   }
   ok("beide Anlagen bestehen noch", sql("select count(*) from public.anlagen") === "2");
+  await wieFrisch("nach dem Abmelden eines Kunden");
+
+  // ---------------------------------------------------------------- Neuer Pi-Token: nie verloren, nie nach dem Abmelden
+  const hashA = () => sql(`select token_hash from public.anlagen where id = '${aId}'`);
+  const tokenPasst = (t) => sql(`select token_hash = encode(sha256(convert_to('${t}', 'UTF8')), 'hex') from public.anlagen where id = '${aId}'`) === "t";
+  await anmelden("chef@solarmaa.ch"); await p.waitForSelector(".plant");
+  await oeffne(A); await p.waitForSelector("#fMfa:not([hidden])");
+  await p.fill("#mfaCode", "424242"); await p.tap("#fMfa button[type=submit]"); await p.waitForSelector("#mfaOk:not([hidden])");
+  const liste = /\/rest\/v1\/anlagen\?.*order=name/;
+  await p.route(liste, (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"message":"nicht verfügbar"}' }));
+  await zweimal("#tokenNew");
+  await p.waitForSelector("#tokenBox:not([hidden])");
+  const tok2 = ((await p.textContent("#tokenText")).match(/token = "([0-9a-f]+)"/) || [])[1] || "";
+  ok("Liste nicht ladbar: der neue Token wird trotzdem angezeigt", tok2 && tokenPasst(tok2));
+  await p.unroute(liste);
+  ok("… und die Liste lieferte wirklich einen Fehler", antworten.some((a) => /^503 GET \/rest\/v1\/anlagen/.test(a)));
+  antworten.splice(0, antworten.length, ...antworten.filter((a) => !/^503 /.test(a)));
+  await p.tap("#tokenClose");
+  await oeffne(A); await p.waitForSelector("#members li");
+  const vorherA = hashA();
+  await p.route(liste, async (route) => { await new Promise((res) => setTimeout(res, 2500)); await route.continue().catch(() => {}); });
+  await p.tap("#tokenNew");
+  const tokenAntwort = p.waitForResponse((r) => /anlage_token_neu/.test(r.url()));
+  await p.tap("#tokenNew"); await tokenAntwort;
+  await p.tap("#logout"); await p.waitForSelector("#vLogin:not([hidden])");
+  await p.waitForTimeout(3500);                      // die verspätete Liste ist jetzt da
+  await p.unroute(liste);
+  const ohneToken = async (wo) => {
+    const z = await p.evaluate(() => ({ box: document.getElementById("tokenBox").hidden, text: document.getElementById("tokenText").textContent, html: document.documentElement.outerHTML }));
+    ok(`${wo}: kein Pi-Token im Dokument`, z.box && z.text === "" && !/token = "[0-9a-f]{20,}"/.test(z.html), JSON.stringify([z.box, z.text]));
+  };
+  ok("der Token wurde wirklich erneuert", hashA() !== vorherA);
+  await ohneToken("Abmelden während die Liste lädt");
+  await anmelden("kunde@example.ch"); await p.waitForSelector("#pNow .tile"); await p.waitForTimeout(500);
+  await ohneToken("nächstes Konto im selben Browser");
+  await abmelden();
+  antworten.splice(0, antworten.length, ...antworten.filter((a) => !/^401 /.test(a)));
+
+  // ---------------------------------------------------------------- Ältere Token-Erneuerung überschreibt Zwei-Faktor nicht
+  const ctx2 = await browser.newContext({ ...devices["iPhone 13"] });
+  const q = await ctx2.newPage();
+  await q.clock.install();
+  await q.goto(URL_ + "/"); await q.waitForSelector("#vLogin:not([hidden])");
+  await q.fill("#email", "chef@solarmaa.ch"); await q.fill("#pw", PW); await q.tap("#loginBtn");
+  await q.waitForSelector(".plant"); await q.tap(`.plant:has-text("${A}")`); await q.waitForSelector("#fMfa:not([hidden])");
+  let erneuert = 0;
+  await q.route(/\/auth\/v1\/token\?grant_type=refresh_token/, async (route) => {
+    if (erneuert++ === 0) await new Promise((res) => setTimeout(res, 4000));          // die erste Erneuerung ist langsam
+    await route.continue().catch(() => {});
+  });
+  await q.clock.fastForward("01:00:00");             // Sitzung gilt als abgelaufen
+  await q.evaluate(() => window.dispatchEvent(new Event("resize")));                    // löst eine Abfrage samt Erneuerung aus
+  for (let i = 0; i < 50 && erneuert === 0; i++) await q.waitForTimeout(100);
+  ok("eine Erneuerung der Sitzung läuft", erneuert >= 1);
+  await q.fill("#mfaCode", "424242"); await q.tap("#fMfa button[type=submit]");
+  await q.waitForSelector("#mfaOk:not([hidden])", { timeout: 15000 });
+  await q.waitForTimeout(5000);                      // die langsame Erneuerung ist längst zurück
+  const stufe = await q.evaluate(() => { const t = JSON.parse(localStorage.getItem("sm_portal")).access.split(".")[1]; return JSON.parse(atob(t.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (t.length % 4)) % 4))).aal; });
+  ok("nach Zwei-Faktor und verspäteter Erneuerung gilt weiterhin aal2", stufe === "aal2", stufe);
+  // (Die Knöpfe sind hier gesperrt, weil die Anlage nach dem Zeitsprung als offline gilt; massgebend ist die Stufe.)
+  ok("… und die Seite zeigt Zwei-Faktor bestätigt", (await q.isVisible("#mfaOk")) && !/Zwei-Faktor/.test(await q.textContent("#fernHinweis")));
+  await ctx2.close();
   await browser.close();
   fs.rmSync(piDir, { recursive: true, force: true });
 })().catch(async (e) => {
