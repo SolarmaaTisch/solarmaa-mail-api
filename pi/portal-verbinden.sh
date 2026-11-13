@@ -14,9 +14,28 @@ CONF=/etc/solarmaa-dash/config.toml
 [[ -f "$CONF" ]] || { echo "Programm ist noch nicht installiert (zuerst schnellstart.sh)."; exit 1; }
 
 echo "==> Neueste Programmversion holen"
-if [[ -x /usr/local/sbin/solarmaa-update ]]; then
+# Direkt aus dem Repository aktualisieren (unabhängig von einer älteren Fassung von solarmaa-update).
+SRC=/opt/solarmaa-dash/src
+BRANCH=$(cat /etc/solarmaa-dash/update-branch 2>/dev/null || echo claude/vibrant-newton-yc8ppy)
+Z=/var/lib/solarmaa-dash/abregelung-zustand.json
+if [[ -f "$Z" ]]; then echo "    Hinweis: Zustandsdatei vorhanden: $(cat "$Z")"; fi
+if grep -q "abregelung.wechselrichter" "$CONF"; then
+  echo "    Abregelung ist konfiguriert: Update wird übersprungen, falls gerade abgeregelt wird."
   /usr/local/sbin/solarmaa-update || true
-  tail -n 2 /var/log/solarmaa-dash/update.log 2>/dev/null || tail -n 2 /var/lib/solarmaa-dash/update.log 2>/dev/null || true
+else
+  rm -f "$Z"       # ohne konfigurierte Wechselrichter kann nichts begrenzt sein
+  if [[ -d "$SRC/.git" ]]; then
+    ALT=$(git -C "$SRC" rev-parse --short HEAD)
+    git -C "$SRC" fetch --quiet origin "$BRANCH"
+    git -C "$SRC" checkout --quiet --force "origin/$BRANCH"
+    if "$SRC/pi/install.sh" --update >/dev/null; then
+      echo "    Aktualisiert: $ALT → $(git -C "$SRC" rev-parse --short HEAD)"
+    else
+      echo "    Installation fehlgeschlagen, zurück auf $ALT"; git -C "$SRC" checkout --quiet --force "$ALT"; "$SRC/pi/install.sh" --update >/dev/null
+    fi
+  else
+    echo "    Kein Quellcode unter $SRC gefunden. Bitte zuerst schnellstart.sh ausführen."; exit 1
+  fi
 fi
 
 echo "==> Portal in die Konfiguration eintragen"

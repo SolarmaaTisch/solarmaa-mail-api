@@ -5,14 +5,25 @@ set -uo pipefail
 SRC=/opt/solarmaa-dash/src
 LOGDIR=/var/log/solarmaa-dash   # gehört root: der Webdienst kann hier nichts unterschieben
 LOG=$LOGDIR/update.log
-ZUSTAND=/var/lib/solarmaa-dash/abregelung-zustand.json
 install -d -m 755 -o root -g root "$LOGDIR"
 BRANCH=$(cat /etc/solarmaa-dash/update-branch 2>/dev/null || echo main)
 {
   echo "=== Update $(date '+%d.%m.%Y %H:%M:%S'), Branch $BRANCH ==="
   rm -f /var/lib/solarmaa-dash/update-anfrage
-  if grep -q '"begrenzt": true' "$ZUSTAND" 2>/dev/null; then
-    echo "Verschoben: Anlage wird gerade abgeregelt. Update nach dem negativen Preisfenster erneut starten."; exit 0
+  # Während einer laufenden Abregelung nicht neu starten. Massgebend ist der laufende Dienst
+  # (nicht eine Datei, die veraltet sein kann). Mit --erzwingen wird trotzdem aktualisiert.
+  if [[ "${1:-}" != "--erzwingen" ]] && python3 - <<'PY'
+import json, sys, tomllib, urllib.request
+try:
+    port = tomllib.load(open("/etc/solarmaa-dash/config.toml", "rb")).get("server", {}).get("port", 80)
+    d = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/now", timeout=5))
+    a = d.get("abregelung") or {}
+    sys.exit(0 if a.get("aktiv") and a.get("modus") in ("auto", "test") else 1)
+except Exception:
+    sys.exit(1)      # Dienst nicht erreichbar: Update darf laufen
+PY
+  then
+    echo "Verschoben: Anlage wird gerade abgeregelt. Später erneut starten (oder: sudo solarmaa-update --erzwingen)."; exit 0
   fi
   if [[ ! -d "$SRC/.git" ]]; then echo "FEHLER: $SRC ist kein Git-Repository"; exit 1; fi
   ALT=$(git -C "$SRC" rev-parse --short HEAD)

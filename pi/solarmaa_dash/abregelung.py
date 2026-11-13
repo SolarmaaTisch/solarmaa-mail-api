@@ -154,8 +154,10 @@ class Abregelung:
             return True    # Datei beschädigt: sicherheitshalber freigeben
 
     def _zustand_schreiben(self) -> None:
-        begrenzt = any(w.letzte_w is None or w.letzte_w < w.nenn_w for w in self.wr) if self.modus != "simulation" \
-            else self.unbekannt
+        # Begrenzt ist ein Wechselrichter nur, wenn wir ihm tatsächlich weniger als Nennleistung
+        # geschrieben haben (oder ein früherer Lauf das getan hat und noch nicht freigegeben ist).
+        begrenzt = self.unbekannt or (self.modus != "simulation"
+                                      and any(w.letzte_w is not None and w.letzte_w < w.nenn_w for w in self.wr))
         if self.zustand_datei is not None and begrenzt != getattr(self, "_zustand_alt", None):
             try:
                 self.zustand_datei.write_text(json.dumps({"begrenzt": begrenzt, "ts": int(time.time())}))
