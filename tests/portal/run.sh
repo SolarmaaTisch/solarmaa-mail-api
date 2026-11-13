@@ -48,7 +48,8 @@ aufraeumen() {
   rm -rf "$TMP"
 }
 trap aufraeumen EXIT
-mkdir "$TMP/db" "$TMP/sock"
+mkdir "$TMP/db" "$TMP/sock" "$TMP/tmp"
+export TMPDIR="$TMP/tmp"              # auch die Temp-Ordner der Testläufe verschwinden am Ende
 chmod 755 "$TMP" "$TMP/sock"; chmod 700 "$TMP/db"
 if [[ ${#ALS[@]} -gt 0 ]]; then chown postgres "$TMP/db" "$TMP/sock"; fi
 

@@ -1,6 +1,12 @@
 """Ablauf Pi <-> Portal mit dem echten Pi-Code gegen die Attrappe (wird von run.sh gestartet).
 
   PGHOST=… PGPORT=… PGDATABASE=… python3 pi_ablauf.py http://127.0.0.1:<port> [--alt]
+  python3 pi_ablauf.py http://127.0.0.1:<port> --runde <ordner> <token>
+
+Mit --runde meldet sich ein Pi (Konfiguration in <ordner>, wird beim ersten Mal angelegt) genau
+einmal beim Portal und führt dessen Befehle aus. Jeder Aufruf ist ein neuer Prozess und wirkt
+darum wie ein Neustart des Dienstes; ein Update ist dort «nicht eingerichtet» (wie in der Demo).
+Der Browsertest und der Tester treiben damit den Pi von Hand.
 
 Simuliert sind nur der Neustart des Dienstes und der Update-Lauf (update.sh). Mit --alt läuft
 der neue Pi gegen eine Datenbank auf dem Stand von Stufe 1 (ohne Fernwartung).
@@ -70,13 +76,15 @@ class EineRunde:
 
 
 class Pi:
-    def __init__(self, token: str):
-        self.d = Path(tempfile.mkdtemp(prefix="smpi."))
+    def __init__(self, token: str, ordner: str | None = None):
+        self.d = Path(ordner) if ordner else Path(tempfile.mkdtemp(prefix="smpi."))
+        self.d.mkdir(parents=True, exist_ok=True)
         self.pfad = self.d / "config.toml"
-        self.pfad.write_text(
-            f'[anlage]\nname = "Ablauf Alt"\n\n[smartme]\napi_key = "{API_KEY}"\n\n[easee]\nbenutzer = "tin"\n'
-            f'passwort = "{PASSWORT}"\n\n[portal]\nurl = "{URL}"\nschluessel = "test-key"\ntoken = "{token}"\n'
-            f'fernwartung = true\n\n[daten]\npfad = "{self.d}/data.db"\n', encoding="utf-8")
+        if not self.pfad.exists():
+            self.pfad.write_text(
+                f'[anlage]\nname = "Ablauf Alt"\n\n[smartme]\napi_key = "{API_KEY}"\n\n[easee]\nbenutzer = "tin"\n'
+                f'passwort = "{PASSWORT}"\n\n[portal]\nurl = "{URL}"\nschluessel = "test-key"\ntoken = "{token}"\n'
+                f'fernwartung = true\n\n[daten]\npfad = "{self.d}/data.db"\n', encoding="utf-8")
         self.neustarts = 0
         self.update = "ok"
         wartung.UPDATE_LOG = self.d / "update.log"
@@ -221,4 +229,12 @@ def ablauf_alt() -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.ERROR)
+    if "--runde" in sys.argv:
+        i = sys.argv.index("--runde")
+        pi_ = Pi(sys.argv[i + 2], sys.argv[i + 1])
+        pi_.update = "fehlt"
+        pi_.runde()
+        p_ = pi_.state.portal
+        print(json.dumps({"fehler": p_.fehler, "letzter_befehl": p_.letzter_befehl, "neustart": pi_.neustarts > 0}))
+        sys.exit(1 if p_.fehler else 0)
     ablauf_alt() if ALT else ablauf_neu()
