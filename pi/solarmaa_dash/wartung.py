@@ -50,6 +50,32 @@ class Wartung:
             raise ValueError("Web-Update ist auf diesem Gerät nicht eingerichtet (install.sh erneut ausführen)")
         (self.daten / "update-anfrage").write_text(f"{von} {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
+    def update_ergebnis(self, seit: float) -> tuple[bool, str] | None:
+        """Ergebnis des letzten Update-Laufs aus dem Protokoll von update.sh, sofern er nach «seit»
+        begonnen hat. None = noch kein Lauf seither oder noch nicht fertig."""
+        try:
+            zeilen = UPDATE_LOG.read_text(encoding="utf-8", errors="replace")[-20000:].splitlines()
+        except OSError:
+            return None
+        start = next((i for i in range(len(zeilen) - 1, -1, -1) if zeilen[i].startswith("=== Update ")), None)
+        if start is None:
+            return None
+        try:        # Kopfzeile: === Update TT.MM.JJJJ HH:MM:SS, Branch … ===
+            beginn = time.mktime(time.strptime(zeilen[start][11:30], "%d.%m.%Y %H:%M:%S"))
+        except ValueError:
+            return None
+        if beginn < seit - 5:
+            return None
+        block = [z.strip() for z in zeilen[start + 1:] if z.strip()]
+        for z in block:
+            if z.startswith("FEHLER"):
+                return False, z
+        if block and block[-1].startswith(("OK:", "Bereits aktuell")):
+            return True, block[-1]
+        if block and block[-1].startswith("Verschoben"):
+            return False, block[-1]
+        return None
+
     def erkennung_starten(self) -> None:
         from . import erkennung
         with self.lock:

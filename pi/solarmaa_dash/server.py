@@ -56,6 +56,7 @@ class State:
         self.rechnungen = rechnungen
         self.wartung = wartung
         self.portal = None
+        self.fernwartung = None      # Fernwartung (Befehle des Portals)
         self.konfig = None           # KonfigWeb
         self.code_datei = None       # Einmal-Code für die Ersteinrichtung
         self.abregelung = None

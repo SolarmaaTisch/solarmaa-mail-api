@@ -152,7 +152,8 @@ def haus_loop(state: State, stop: threading.Event) -> None:
         stop.wait(max(1.0, state.haus.intervall - (time.time() - t0)))
 
 
-def cmd_run(args) -> int:
+def _aufbauen(args):
+    """Lädt die Konfiguration und baut alle Teile bis und mit Webserver auf."""
     cfg = load_cfg(args.config)
     store, haus, auth, rechnungen = open_all(cfg, args.db)
     source = make_source(cfg)
@@ -185,19 +186,40 @@ def cmd_run(args) -> int:
                 auth.anlegen(name, "demo-passwort", rolle, ein, anzeigename=f"Demo {rolle}")
             log.warning("DEMO: Benutzer solarmaa / verwaltung / mieter mit bekanntem Passwort «demo-passwort» "
                         "angelegt. [haus] demo = true nie auf einer Kundenanlage verwenden.")
+    from .fernwartung import Fernwartung
+    from .portal import Portal
+    state.portal = Portal(cfg)
+    state.fernwartung = Fernwartung(state.portal, state, daten_dir_k)
     app_dir = find_app_dir(cfg)
     host, port = cfg["server"]["host"], int(args.port or cfg["server"]["port"])
     httpd = serve(state, app_dir, host, port)
     log.info("Solarmaa Dashboard läuft auf http://%s:%s (Quelle: %s%s)", host, port, source.name,
              f", Haus: {haus.name} mit {len(haus.zaehler)} Zählern" if haus else "")
+    return cfg, store, haus, source, state, httpd
 
+
+def cmd_run(args) -> int:
+    try:
+        cfg, store, haus, source, state, httpd = _aufbauen(args)
+    except KeyboardInterrupt:
+        raise
+    except BaseException as e:  # noqa: BLE001 – auch SystemExit aus find_app_dir
+        # Wurde die Konfiguration eben über das Portal geändert und der Dienst startet damit nicht,
+        # die vorherige Fassung zurückspielen; systemd startet den Dienst danach neu.
+        import errno
+        from .fernwartung import ruecksetzen_falls_probe
+        belegt = isinstance(e, OSError) and e.errno == errno.EADDRINUSE      # liegt nicht an der Konfiguration
+        cfg_pfad = args.config or (DEFAULT_CONFIG if Path(DEFAULT_CONFIG).is_file() else None)
+        daten_dir = Path(args.db).parent if args.db and args.db != ":memory:" else None
+        if not belegt and ruecksetzen_falls_probe(cfg_pfad, e, daten_dir):
+            return 1
+        raise
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     if haus:
         threading.Thread(target=haus_loop, args=(state, stop), name="haus", daemon=True).start()
-    from .portal import Portal, portal_loop
-    state.portal = Portal(cfg)
+    from .portal import portal_loop
     if state.portal.aktiv:
         threading.Thread(target=portal_loop, args=(state.portal, state, stop), name="portal", daemon=True).start()
         log.info("Portal-Verbindung aktiv: %s", state.portal.url)
