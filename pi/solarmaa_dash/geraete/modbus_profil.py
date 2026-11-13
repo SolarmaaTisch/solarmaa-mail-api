@@ -15,6 +15,7 @@ Profil-Aufbau:
 """
 from __future__ import annotations
 
+import re
 import struct
 import tomllib
 from pathlib import Path
@@ -27,10 +28,22 @@ FELDER = ("w", "import_wh", "export_wh", "soc", "pv_w", "grid_w", "battery_w")
 GROESSE = {"u16": 1, "i16": 1, "u32": 2, "i32": 2, "f32": 2}
 
 
-def lade_profil(name_oder_pfad: str) -> dict:
-    p = Path(name_oder_pfad)
-    if not p.suffix:
-        p = PROFIL_DIR / f"{name_oder_pfad}.toml"
+PROFIL_NAME = re.compile(r"^[a-z0-9_]+$")
+
+
+def profil_pfad(name) -> Path:
+    """Pfad eines mitgelieferten Profils. Nur Namen, keine Pfade: Die Konfiguration (auch die aus
+    der Ferne geänderte) darf nie bestimmen, aus welcher Datei Register gelesen oder geschrieben werden."""
+    if not isinstance(name, str) or not PROFIL_NAME.match(name):
+        raise ValueError(f"Profilname {name!r} ungültig (nur Kleinbuchstaben, Ziffern und _; Profile liegen in {PROFIL_DIR.name}/)")
+    p = (PROFIL_DIR / f"{name}.toml").resolve()
+    if p.parent != PROFIL_DIR.resolve() or not p.is_file():
+        raise ValueError(f"Profil {name!r} gibt es nicht")
+    return p
+
+
+def lade_profil(name: str) -> dict:
+    p = profil_pfad(name)
     with open(p, "rb") as fh:
         prof = tomllib.load(fh)
     werte = prof.get("werte") or {}

@@ -37,7 +37,7 @@ import json
 from collections import deque
 from pathlib import Path
 
-from .geraete.modbus_profil import PROFIL_DIR
+from .geraete.modbus_profil import profil_pfad
 from .modbus import ModbusError, ModbusTcpClient
 
 log = logging.getLogger("solarmaa_dash")
@@ -46,7 +46,7 @@ FALLBACKS = ("halten", "einspeisung", "aus")
 
 
 def lade_steuerprofil(name: str) -> dict:
-    with open(PROFIL_DIR / f"{name}.toml", "rb") as fh:
+    with open(profil_pfad(name), "rb") as fh:    # nur mitgelieferte Profile, nie ein Pfad aus der Konfiguration
         prof = tomllib.load(fh)
     st = prof.get("steuerung")
     if not st or "limit_register" not in st:
