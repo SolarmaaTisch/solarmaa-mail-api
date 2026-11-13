@@ -8,6 +8,18 @@
 --   * Die Pis schreiben nie direkt in Tabellen. Sie rufen pi_melden() mit ihrem geheimen
 --     Anlagen-Token auf; gespeichert ist nur dessen SHA-256-Hash.
 --   * Geschrieben wird ausschliesslich über die Funktionen unten (security definer).
+--
+-- Fernwartung (Stufe 3)
+--   * Befehle anlegen, Konfiguration lesen, Pi-Token erneuern und Anlage löschen: nur Solarmaa-Konten
+--     mit Zwei-Faktor-Anmeldung (aal2).
+--   * Ein Pi erhält Befehle nur, wenn er in seiner Meldung fernwartung = true mitschickt
+--     (ältere Programmversionen tun das nie und bekommen darum keine Befehle).
+--   * Zustände eines Befehls:  offen -> gesendet -> erledigt | fehler      (Pi holt ab und quittiert)
+--                              offen -> verfallen                          (nach einer Stunde, oder ersetzt)
+--     «gesendet» ohne Quittung bleibt stehen, damit eine späte Quittung noch ankommt; das Portal
+--     zeigt nach 45 Minuten «keine Quittung».
+--   * Die Nutzlast (kann neue Passwörter enthalten) ist für niemanden lesbar und wird bei der
+--     Herausgabe an den Pi, beim Verfallen und bei der Quittung gelöscht.
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -57,12 +69,15 @@ create table if not exists public.tageswerte (
   primary key (anlage_id, tag)
 );
 
+-- Stufe 3: Fernwartung ist pro Anlage aus, bis der Pi sie meldet ([portal] fernwartung = true).
+alter table public.anlagen add column if not exists fernwartung boolean not null default false;
+
 -- Stufe 3: Fernwartung. Befehle vom Portal an den Pi und die (maskierte) Konfiguration des Pi.
 create table if not exists public.befehle (
   id uuid primary key default gen_random_uuid(),
   anlage_id uuid not null references public.anlagen (id) on delete cascade,
   art text not null check (art in ('update', 'konfig')),
-  nutzlast jsonb,                       -- wird nach der Ausführung gelöscht
+  nutzlast jsonb,                       -- wird bei Herausgabe, Verfall und Quittung gelöscht
   status text not null default 'offen' check (status in ('offen', 'gesendet', 'erledigt', 'fehler', 'verfallen')),
   ergebnis text,
   erstellt timestamptz not null default now(),
@@ -139,7 +154,7 @@ revoke all on public.befehle, public.anlagen_konfig from anon, authenticated;
 grant select on public.admins, public.mitglieder, public.messwerte, public.tageswerte, public.anlagen_konfig to authenticated;
 -- Befehle: alles ausser der Nutzlast (kann neue Passwörter enthalten)
 grant select (id, anlage_id, art, status, ergebnis, erstellt, erstellt_von, gesendet_am, erledigt_am) on public.befehle to authenticated;
-grant select (id, name, ort, kwp, erstellt, letzter_kontakt, version, live, heute, status, stoerung, abregelung, alarme)
+grant select (id, name, ort, kwp, erstellt, letzter_kontakt, version, live, heute, status, stoerung, abregelung, alarme, fernwartung)
   on public.anlagen to authenticated;
 
 -- ---------------------------------------------------------------- Pi meldet Daten
@@ -151,7 +166,9 @@ declare
   h jsonb := p_daten -> 'heute';
   slot timestamptz := to_timestamp(floor(extract(epoch from now()) / 300) * 300);
   v_tag date;
-  v_befehle jsonb;
+  v_befehle jsonb := '[]'::jsonb;
+  -- Textvergleich statt Cast: ein unsinniger Wert bricht die Meldung nicht ab, sondern gilt als «aus»
+  v_fern boolean := coalesce((p_daten ->> 'fernwartung') = 'true', false);
 begin
   if p_token is null or length(p_token) < 20 or pg_column_size(p_daten) > 60000 then
     raise exception 'ungueltig' using errcode = '22023';
@@ -169,7 +186,8 @@ begin
     status = left(p_daten ->> 'status', 20),
     stoerung = coalesce((p_daten ->> 'stoerung')::boolean, false),
     abregelung = p_daten -> 'abregelung',
-    alarme = coalesce(p_daten -> 'alarme', '[]'::jsonb)
+    alarme = coalesce(p_daten -> 'alarme', '[]'::jsonb),
+    fernwartung = v_fern
   where id = a_id;
 
   if l is not null then
@@ -197,16 +215,21 @@ begin
       pv_wh = excluded.pv_wh, load_wh = excluded.load_wh, import_wh = excluded.import_wh,
       export_wh = excluded.export_wh, ev_wh = excluded.ev_wh;
   end if;
-  -- Fernwartung: offene Befehle mitgeben (höchstens eine Stunde alt), als «gesendet» markieren
-  update public.befehle set status = 'verfallen'
+  -- Fernwartung: offene Befehle mitgeben (höchstens eine Stunde alt), als «gesendet» markieren.
+  -- Die Nutzlast wird in derselben Transaktion gelöscht: Sie liegt nur, bis der Pi sie abholt.
+  update public.befehle set status = 'verfallen', nutzlast = null
    where anlage_id = a_id and status = 'offen' and erstellt < now() - interval '1 hour';
-  with b as (
-    update public.befehle set status = 'gesendet', gesendet_am = now()
-     where anlage_id = a_id and status = 'offen'
-    returning id, art, nutzlast, erstellt
-  )
-  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'art', art, 'nutzlast', nutzlast) order by erstellt), '[]'::jsonb)
-    into v_befehle from b;
+  if v_fern then        -- nur an Pis, die Fernwartung eingeschaltet haben und Befehle verstehen
+    with b as (
+      select id, art, nutzlast, erstellt from public.befehle
+       where anlage_id = a_id and status = 'offen' order by erstellt for update
+    ), u as (
+      update public.befehle x set status = 'gesendet', gesendet_am = now(), nutzlast = null
+        from b where x.id = b.id
+    )
+    select coalesce(jsonb_agg(jsonb_build_object('id', id, 'art', art, 'nutzlast', nutzlast) order by erstellt), '[]'::jsonb)
+      into v_befehle from b;
+  end if;
   return jsonb_build_object('ok', true, 'befehle', v_befehle);
 end;
 $$;
@@ -231,8 +254,13 @@ returns jsonb language plpgsql security definer set search_path = public, extens
 declare tok text := encode(gen_random_bytes(24), 'hex');
 begin
   if not public.ist_admin() then raise exception 'nur fuer Solarmaa' using errcode = '42501'; end if;
+  -- Mit einem neuen Token liessen sich sonst wartende Befehle abholen und eine Konfiguration unterschieben.
+  if not public.hat_2fa() then raise exception 'Zwei-Faktor-Anmeldung noetig' using errcode = '42501'; end if;
   update public.anlagen set token_hash = encode(digest(tok, 'sha256'), 'hex') where id = p_anlage;
   if not found then raise exception 'Anlage nicht gefunden' using errcode = '02000'; end if;
+  -- Was für den bisherigen Pi bestimmt war oder von ihm stammt, gilt für den neuen Token nicht.
+  update public.befehle set status = 'verfallen', nutzlast = null where anlage_id = p_anlage and status = 'offen';
+  delete from public.anlagen_konfig where anlage_id = p_anlage;
   return jsonb_build_object('id', p_anlage, 'token', tok);
 end;
 $$;
@@ -241,6 +269,7 @@ create or replace function public.anlage_loeschen(p_anlage uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if not public.ist_admin() then raise exception 'nur fuer Solarmaa' using errcode = '42501'; end if;
+  if not public.hat_2fa() then raise exception 'Zwei-Faktor-Anmeldung noetig' using errcode = '42501'; end if;
   delete from public.anlagen where id = p_anlage;
 end;
 $$;
@@ -269,14 +298,22 @@ $$;
 -- Nur Solarmaa-Konten MIT Zwei-Faktor-Anmeldung dürfen Befehle an einen Pi schicken.
 create or replace function public.befehl_anlegen(p_anlage uuid, p_art text, p_nutzlast jsonb default null)
 returns uuid language plpgsql security definer set search_path = public as $$
-declare neu uuid; mail text;
+declare neu uuid; mail text; v_fern boolean;
 begin
   if not public.ist_admin() then raise exception 'nur fuer Solarmaa' using errcode = '42501'; end if;
   if not public.hat_2fa() then raise exception 'Zwei-Faktor-Anmeldung noetig' using errcode = '42501'; end if;
   if p_art not in ('update', 'konfig') then raise exception 'unbekannter Befehl' using errcode = '22023'; end if;
   if p_art = 'konfig' and (p_nutzlast ->> 'text') is null then raise exception 'Konfiguration fehlt' using errcode = '22023'; end if;
   if pg_column_size(p_nutzlast) > 250000 then raise exception 'zu gross' using errcode = '22023'; end if;
-  if not exists (select 1 from public.anlagen where id = p_anlage) then raise exception 'Anlage nicht gefunden' using errcode = '02000'; end if;
+  -- Aufräumen für alle Anlagen: Was eine Stunde nicht abgeholt wurde, verfällt samt Nutzlast
+  -- (auch wenn der betreffende Pi sich nie mehr meldet).
+  update public.befehle set status = 'verfallen', nutzlast = null
+   where status = 'offen' and erstellt < now() - interval '1 hour';
+  select fernwartung into v_fern from public.anlagen where id = p_anlage;
+  if not found then raise exception 'Anlage nicht gefunden' using errcode = '02000'; end if;
+  if not v_fern then
+    raise exception 'Fernwartung ist auf dieser Anlage nicht eingeschaltet' using errcode = '55000';
+  end if;
   select email into mail from auth.users where id = auth.uid();
   -- ein noch nicht abgeholter Befehl derselben Art wird ersetzt
   update public.befehle set status = 'verfallen', nutzlast = null
