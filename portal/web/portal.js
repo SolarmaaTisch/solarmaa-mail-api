@@ -15,6 +15,10 @@
 
   /* ------------------------------------------------------------ Sitzung */
   let sess = null, admin = false, plants = [], current = null, timer = null;
+  // marke: zählt jeden Ansichts- und Anlagenwechsel. anm: zählt jedes Abmelden. Jede Fortsetzung nach
+  // einem await prüft, ob sie noch zur angezeigten Ansicht bzw. Anmeldung gehört, und bricht sonst ab.
+  // So kann eine verspätete Antwort nie die falsche Anlage füllen oder nach dem Abmelden etwas anzeigen.
+  let marke = 0, anm = 0;
   const store = {
     load() { try { return JSON.parse(localStorage.getItem("sm_portal") || "null"); } catch (e) { return null; } },
     save(s) { try { s ? localStorage.setItem("sm_portal", JSON.stringify(s)) : localStorage.removeItem("sm_portal"); } catch (e) { /* privat */ } },
@@ -35,8 +39,12 @@
   async function token() {
     if (!sess) throw new ApiError(401, "Bitte anmelden");
     if (Date.now() > sess.exp - 60000) {
-      try { setSess(await raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: sess.refresh }) })); }
-      catch (e) { setSess(null); throw new ApiError(401, "Sitzung abgelaufen"); }
+      const a = anm;
+      let d;
+      try { d = await raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: sess.refresh }) }); }
+      catch (e) { if (a === anm) setSess(null); throw new ApiError(401, "Sitzung abgelaufen"); }
+      if (a !== anm || !sess) throw new ApiError(401, "Bitte anmelden");      // inzwischen abgemeldet: Sitzung nicht wiederbeleben
+      setSess(d);
     }
     return sess.access;
   }
@@ -45,6 +53,7 @@
 
   /* ------------------------------------------------------------ Ansichten */
   function show(view) {
+    marke++; sureReset();
     ["vLogin", "vNewPw", "vList", "vPlant"].forEach((v) => { $(v).hidden = v !== view; });
     const inApp = view === "vList" || view === "vPlant";
     $("logout").hidden = !inApp; $("who").hidden = !inApp;
@@ -55,7 +64,7 @@
     if (view === "vPlant") timer = setInterval(() => loadPlant(current, false).catch(onErr), 30000);
     window.scrollTo(0, 0);
   }
-  function onErr(e) { if (e.status === 401) { setSess(null); show("vLogin"); } }
+  function onErr(e) { if (e.status === 401) abmeldenLokal(); }
   const online = (p) => p.letzter_kontakt && (Date.now() - new Date(p.letzter_kontakt).getTime()) / 1000 < ONLINE_S;
   function statePill(p) {
     if (!p.letzter_kontakt) return '<span class="pill off">noch nie verbunden</span>';
@@ -66,7 +75,9 @@
   }
 
   async function loadList() {
-    plants = await get(`anlagen?select=${COLS}&order=name`);
+    const m = marke, neu = await get(`anlagen?select=${COLS}&order=name`);
+    if (m !== marke) return;
+    plants = neu;
     const on = plants.filter(online), bad = on.filter((p) => p.stoerung || p.status === "fehler");
     const pv = on.reduce((a, p) => a + (p.live?.pv_w || 0), 0);
     $("summary").innerHTML = plants.length > 1 ? `<span class="pill">${plants.length} Anlagen</span><span class="pill ok">${on.length} online</span>${plants.length - on.length ? `<span class="pill off">${plants.length - on.length} offline</span>` : ""}${bad.length ? `<span class="pill bad">${bad.length} mit Störung</span>` : ""}<span class="pill">Produktion jetzt ${fmtW(pv)}</span>` : "";
@@ -82,7 +93,8 @@
   async function openPlant(id) { current = id; show("vPlant"); await loadPlant(id, true).catch(onErr); }
 
   async function loadPlant(id, first) {
-    const rows = await get(`anlagen?select=${COLS}&id=eq.${encodeURIComponent(id)}`);
+    const m = marke, rows = await get(`anlagen?select=${COLS}&id=eq.${encodeURIComponent(id)}`);
+    if (m !== marke || current !== id) return;         // inzwischen andere Ansicht, andere Anlage oder abgemeldet
     const p = rows[0];
     if (!p) { current = null; show("vList"); return loadList(); }
     $("pAdmin").hidden = !admin;
@@ -112,12 +124,13 @@
       get(`messwerte?select=ts,pv_w,load_w&anlage_id=eq.${encodeURIComponent(id)}&ts=gte.${encodeURIComponent(t0.toISOString())}&order=ts`),
       get(`tageswerte?select=tag,pv_wh,load_wh&anlage_id=eq.${encodeURIComponent(id)}&tag=gte.${iso(d30)}&order=tag`),
     ]);
+    if (m !== marke || current !== id) return;
     drawDay(mw, t0.getTime());
     drawDays(tw, d30);
     $("pAdmin").hidden = !admin;
     $("pFern").hidden = !admin;
     if (admin && first) { loadMembers(id); loadFern(id, p).catch(onErr); }
-    else if (admin) { fern.p = p; fernStatus(); }
+    else if (admin && fernId() === id) { fern.p = p; fernStatus(); }
   }
 
   /* ------------------------------------------------------------ Diagramme */
@@ -170,10 +183,12 @@
 
   /* ------------------------------------------------------------ Verwaltung (Admin) */
   async function loadMembers(id) {
-    const m = await get(`mitglieder?select=email,user_id&anlage_id=eq.${encodeURIComponent(id)}&order=email`);
+    const mk = marke, m = await get(`mitglieder?select=email,user_id&anlage_id=eq.${encodeURIComponent(id)}&order=email`);
+    if (mk !== marke || current !== id) return;
     $("members").innerHTML = m.map((x) => `<li><span>${esc(x.email)}</span><button class="btn ghost" data-mail="${esc(x.email)}">Entfernen</button></li>`).join("") || '<li class="muted">Noch kein Kunde zugeordnet</li>';
     $("members").querySelectorAll("button").forEach((b) => b.addEventListener("click", async () => {
-      try { await rpc("mitglied_setzen", { p_anlage: id, p_email: b.dataset.mail, p_entfernen: true }); loadMembers(id); } catch (e) { showErr("memErr", e); }
+      const mk2 = marke;
+      try { await rpc("mitglied_setzen", { p_anlage: id, p_email: b.dataset.mail, p_entfernen: true }); if (mk2 === marke) loadMembers(id).catch(onErr); } catch (e) { if (mk2 === marke) showErr("memErr", e); onErr(e); }
     }));
   }
   function showErr(id, e) {
@@ -194,10 +209,12 @@
     ev.preventDefault(); $("addErr").hidden = true;
     const name = $("aName").value.trim();
     if (!name) return showErr("addErr", new Error("Bitte einen Namen eingeben"));
+    const a = anm;
     try {
       const r = await rpc("anlage_anlegen", { p_name: name, p_ort: $("aOrt").value.trim(), p_kwp: parseFloat($("aKwp").value.replace(",", ".")) || 0 });
-      $("fAdd").hidden = true; $("fAdd").reset(); showToken(name, r.token); loadList();
-    } catch (e) { showErr("addErr", e); }
+      if (a !== anm) return;                             // inzwischen abgemeldet: Token nicht mehr anzeigen
+      $("fAdd").hidden = true; $("fAdd").reset(); showToken(name, r.token); loadList().catch(onErr);
+    } catch (e) { if (a === anm) showErr("addErr", e); onErr(e); }
   });
   $("tokenCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("tokenText").textContent); $("tokenCopy").textContent = "Kopiert"; }
@@ -205,21 +222,31 @@
   });
   $("tokenClose").addEventListener("click", () => { $("tokenBox").hidden = true; $("tokenText").textContent = ""; $("tokenCopy").textContent = "Kopieren"; });
   $("tokenNew").addEventListener("click", async () => {
-    const b = $("tokenNew");
-    if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Wirklich? Der alte Token wird ungültig."; return; }
-    b.dataset.sure = ""; b.textContent = "Neuen Pi-Token erzeugen"; $("memErr").hidden = true;
-    try { const r = await rpc("anlage_token_neu", { p_anlage: current }); const p = plants.find((x) => x.id === current); show("vList"); await loadList(); showToken(p?.name || "", r.token); }
-    catch (e) { showErr("memErr", e); }
+    const id = current;
+    if (!id || !sure("tokenNew", "Wirklich? Der alte Token wird ungültig.")) return;
+    $("memErr").hidden = true;
+    const a = anm, m = marke, name = plants.find((x) => x.id === id)?.name || "";
+    try {
+      const r = await rpc("anlage_token_neu", { p_anlage: id });
+      if (a !== anm) return;                             // inzwischen abgemeldet
+      current = null; show("vList"); await loadList(); showToken(name, r.token);
+    } catch (e) { if (m === marke) showErr("memErr", e); onErr(e); }
   });
   $("fMember").addEventListener("submit", async (ev) => {
     ev.preventDefault(); $("memErr").hidden = true;
-    try { await rpc("mitglied_setzen", { p_anlage: current, p_email: $("mEmail").value.trim(), p_entfernen: false }); $("mEmail").value = ""; loadMembers(current); }
-    catch (e) { showErr("memErr", e); }
+    const id = current, m = marke;
+    if (!id) return;
+    try { await rpc("mitglied_setzen", { p_anlage: id, p_email: $("mEmail").value.trim(), p_entfernen: false }); if (m !== marke) return; $("mEmail").value = ""; loadMembers(id).catch(onErr); }
+    catch (e) { if (m === marke) showErr("memErr", e); onErr(e); }
   });
 
   /* ------------------------------------------------------------ Fernwartung (Admin mit Zwei-Faktor) */
   // Die Datenbank prüft jede Aktion selbst (Admin + Zwei-Faktor). Hier wird nur angezeigt und gesendet.
-  const fern = { id: null, p: null, orig: null, faktor: null, timer: null };
+  // fern.id ist die einzige Quelle für die Anlage der Fernwartung. Gesetzt wird sie nur in loadFern(),
+  // nachdem loadPlant() bestätigt hat, dass diese Anlage angezeigt wird; fern.origId hält fest, zu
+  // welcher Anlage die geladene Konfiguration gehört.
+  const fern = { id: null, p: null, orig: null, origId: null, faktor: null, timer: null };
+  const fernId = () => (fern.id && fern.id === current ? fern.id : null);
   function aal() {
     try {
       const t = sess.access.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -227,7 +254,6 @@
     } catch (e) { return ""; }
   }
   const zeit = (t) => (t ? new Date(t).toLocaleString(L, { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
-  const sure = (b, frage, text) => { if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = frage; return false; } b.dataset.sure = ""; b.textContent = text; return true; };
   function mfaLeeren() {
     // Schlüssel und QR-Code der Zwei-Faktor-Einrichtung nie länger als nötig im Dokument lassen
     $("mfaSecret").textContent = ""; $("mfaQr").removeAttribute("src");
@@ -237,12 +263,12 @@
   }
   function fernLeeren() {
     clearInterval(fern.timer);
-    fern.id = null; fern.p = null; fern.orig = null;
+    fern.id = null; fern.p = null; fern.orig = null; fern.origId = null;
     mfaLeeren();
     $("fernKonfig").value = ""; $("fernKonfig").hidden = true; $("fernKonfigSenden").hidden = true;
     ["fernBefehle", "fernStand", "fernMsg", "fernErr", "fernHinweis"].forEach((id) => { $(id).textContent = ""; });
     $("fernMsg").hidden = true; $("fernErr").hidden = true;
-    [["fernUpdate", "Update auslösen"], ["fernKonfigSenden", "Konfiguration senden"]].forEach(([id, text]) => { $(id).dataset.sure = ""; $(id).textContent = text; });
+    sureReset();
     // gesperrt, bis loadFern() die Anlage kennt: Sonst ginge ein Klick ohne Anlage hinaus
     ["fernUpdate", "fernKonfigLaden", "fernKonfigSenden"].forEach((id) => { $(id).disabled = true; });
   }
@@ -259,44 +285,56 @@
     const ok2 = aal() === "aal2";
     $("mfaOk").hidden = !ok2; $("fMfa").hidden = true; $("mfaNeu").hidden = true;
     if (ok2) return;
-    const u = await raw("/auth/v1/user", {}, await token());
+    const m = marke, u = await raw("/auth/v1/user", {}, await token());
+    if (m !== marke) return;
     fern.faktor = ((u && u.factors) || []).find((f) => (f.factor_type || "totp") === "totp" && f.status === "verified") || null;
     $("fMfa").hidden = !fern.faktor; $("mfaNeu").hidden = !!fern.faktor || !$("mfaEnroll").hidden;
   }
   async function mfaPruefen(faktorId, code) {
     if (!/^\d{6}$/.test(code)) throw new Error("Bitte den 6-stelligen Code eingeben");
-    const tok = await token();
+    const m = marke, a = anm, tok = await token();
     const ch = await raw(`/auth/v1/factors/${encodeURIComponent(faktorId)}/challenge`, { method: "POST", body: "{}" }, tok);
+    if (a !== anm) return;
     let d;
     try { d = await raw(`/auth/v1/factors/${encodeURIComponent(faktorId)}/verify`, { method: "POST", body: JSON.stringify({ challenge_id: ch.id, code }) }, tok); }
     catch (e) { throw e.status === 401 ? e : new Error("Code falsch oder abgelaufen. Bitte den aktuellen Code aus der App eingeben."); }
+    if (a !== anm) return;                               // inzwischen abgemeldet: Sitzung nicht wiederbeleben
     if (!d || !d.access_token) throw new Error("Bestätigung fehlgeschlagen");
     setSess(d);
+    if (m !== marke) return;
     mfaLeeren();
-    await loadMfa(); fernStatus(); loadBefehle().catch(onErr);
+    await loadMfa();
+    if (m !== marke) return;
+    fernStatus(); loadBefehle().catch(onErr);
   }
   $("fMfa").addEventListener("submit", async (ev) => {
     ev.preventDefault(); $("mfaErr").hidden = true;
-    try { await mfaPruefen(fern.faktor.id, $("mfaCode").value.trim()); } catch (e) { $("mfaCode").value = ""; showErr("mfaErr", e); onErr(e); }
+    const m = marke;
+    if (!fern.faktor) return;
+    try { await mfaPruefen(fern.faktor.id, $("mfaCode").value.trim()); } catch (e) { if (m === marke) { $("mfaCode").value = ""; showErr("mfaErr", e); } onErr(e); }
   });
   $("mfaSetup").addEventListener("click", async () => {
     $("mfaErr").hidden = true;
+    const m = marke;
     try {
       const tok = await token();
       const u = await raw("/auth/v1/user", {}, tok);
       // angefangene, nie bestätigte Einrichtungen entfernen
       for (const f of ((u && u.factors) || []).filter((x) => x.status !== "verified")) await raw(`/auth/v1/factors/${encodeURIComponent(f.id)}`, { method: "DELETE" }, tok);
       const d = await raw("/auth/v1/factors", { method: "POST", body: JSON.stringify({ factor_type: "totp", friendly_name: "Solarmaa Portal" }) }, tok);
+      if (m !== marke) return;                           // Ansicht gewechselt oder abgemeldet: Schlüssel nicht mehr anzeigen
       const qr = (d.totp && d.totp.qr_code) || "";
       fern.faktor = { id: d.id, neu: true };
       $("mfaQr").src = qr.startsWith("data:") ? qr : "data:image/svg+xml;utf8," + encodeURIComponent(qr);
       $("mfaSecret").textContent = (d.totp && d.totp.secret) || "";
       $("mfaNeu").hidden = true; $("mfaEnroll").hidden = false; $("mfaEnrollCode").focus();
-    } catch (e) { showErr("mfaErr", e); onErr(e); }
+    } catch (e) { if (m === marke) showErr("mfaErr", e); onErr(e); }
   });
   $("mfaEnroll").addEventListener("submit", async (ev) => {
     ev.preventDefault(); $("mfaErr").hidden = true;
-    try { await mfaPruefen(fern.faktor.id, $("mfaEnrollCode").value.trim()); } catch (e) { $("mfaEnrollCode").value = ""; showErr("mfaErr", e); onErr(e); }
+    const m = marke;
+    if (!fern.faktor) return;
+    try { await mfaPruefen(fern.faktor.id, $("mfaEnrollCode").value.trim()); } catch (e) { if (m === marke) { $("mfaEnrollCode").value = ""; showErr("mfaErr", e); } onErr(e); }
   });
 
   const ART = { update: "Update", konfig: "Konfiguration" };
@@ -309,10 +347,10 @@
     return ["off", "verfallen"];
   }
   async function loadBefehle() {
-    const id = fern.id;
+    const id = fernId(), m = marke;
     if (!id) return;
     const rows = await get(`befehle?select=id,art,status,ergebnis,erstellt,erstellt_von,gesendet_am,erledigt_am&anlage_id=eq.${encodeURIComponent(id)}&order=erstellt.desc&limit=20`);
-    if (fern.id !== id) return;
+    if (m !== marke || fernId() !== id) return;
     // nutzlast wird nie angefordert (gesperrt); ergebnis kommt vom Pi und wird nur als Text eingesetzt
     $("fernBefehle").innerHTML = rows.map((b) => { const [cls, text] = befehlStand(b); return `<li><span class="cmd"><b>${esc(ART[b.art] || b.art)}</b><span class="pill ${cls}">${esc(text)}</span><br><span class="muted small">${esc(zeit(b.erstellt))}${b.erstellt_von ? ` · ${esc(b.erstellt_von)}` : ""}${b.erledigt_am ? ` · quittiert ${esc(zeit(b.erledigt_am))}` : ""}</span>${b.ergebnis ? `<span class="cmd-res">${esc(b.ergebnis)}</span>` : ""}</span></li>`; }).join("") || '<li class="muted">Noch kein Befehl gesendet</li>';
     clearInterval(fern.timer);
@@ -320,10 +358,14 @@
     if (laeuft) fern.timer = setInterval(() => loadBefehle().catch(onErr), 10000);
   }
   async function loadFern(id, p) {
+    const m = marke;
     fernLeeren();
+    if (current !== id || p.id !== id) return;
     fern.id = id; fern.p = p;
     fernStatus();
-    await loadMfa(); fernStatus();
+    await loadMfa();
+    if (m !== marke || fernId() !== id) return;
+    fernStatus();
     await loadBefehle();
   }
   async function sha256(text) {
@@ -332,44 +374,52 @@
   }
   const fernMsg = (text) => { $("fernMsg").textContent = text; $("fernMsg").hidden = !text; };
   $("fernUpdate").addEventListener("click", async () => {
-    const b = $("fernUpdate");
-    if (!fern.id) return;
-    if (!sure(b, "Wirklich? Der Dienst auf dem Pi startet neu.", "Update auslösen")) return;
+    const id = fernId(), m = marke;
+    if (!id) return;
+    if (!sure("fernUpdate", "Wirklich? Der Dienst auf dem Pi startet neu.")) return;
     $("fernErr").hidden = true; fernMsg("");
-    try { await rpc("befehl_anlegen", { p_anlage: fern.id, p_art: "update" }); fernMsg("Update angefordert. Der Pi holt den Befehl bei seiner nächsten Meldung ab (etwa eine Minute)."); await loadBefehle(); }
-    catch (e) { showErr("fernErr", e); onErr(e); }
+    try { await rpc("befehl_anlegen", { p_anlage: id, p_art: "update" }); if (m !== marke) return; fernMsg("Update angefordert. Der Pi holt den Befehl bei seiner nächsten Meldung ab (etwa eine Minute)."); await loadBefehle(); }
+    catch (e) { if (m === marke) showErr("fernErr", e); onErr(e); }
   });
   $("fernKonfigLaden").addEventListener("click", async () => {
-    if (!fern.id) return;
+    const id = fernId(), m = marke;
+    if (!id) return;
     $("fernErr").hidden = true; fernMsg("");
     try {
-      const id = fern.id, rows = await get(`anlagen_konfig?select=text,stand&anlage_id=eq.${encodeURIComponent(id)}`);
-      if (fern.id !== id) return;
+      const rows = await get(`anlagen_konfig?select=text,stand&anlage_id=eq.${encodeURIComponent(id)}`);
+      if (m !== marke || fernId() !== id) return;
       const k = rows[0];
-      fern.orig = k && k.text ? k.text : null;
+      fern.orig = k && k.text ? k.text : null; fern.origId = fern.orig ? id : null;
       $("fernKonfig").value = fern.orig || ""; $("fernKonfig").hidden = !fern.orig; $("fernKonfigSenden").hidden = !fern.orig;
       $("fernStand").textContent = fern.orig ? `Stand ${zeit(k.stand)}` : "";
       if (!fern.orig) fernMsg("Der Pi hat keine Konfiguration übertragen (Fernwartung auf dem Pi aus, oder er hat sich seit dem Einschalten noch nicht gemeldet).");
-    } catch (e) { showErr("fernErr", e); onErr(e); }
+    } catch (e) { if (m === marke) showErr("fernErr", e); onErr(e); }
   });
   $("fernKonfigSenden").addEventListener("click", async () => {
     const b = $("fernKonfigSenden");
-    if (!fern.orig || !fern.id) return;
-    if (!sure(b, "Wirklich senden? Der Dienst auf dem Pi startet neu.", "Konfiguration senden")) return;
+    const id = fernId(), m = marke, orig = fern.orig;
+    if (!id || !orig || fern.origId !== id) return;      // nur die Konfiguration, die für genau diese Anlage geladen wurde
+    if (!sure("fernKonfigSenden", "Wirklich senden? Der Dienst auf dem Pi startet neu.")) return;
     $("fernErr").hidden = true; fernMsg("");
     try {
       // basis = Stand, der hier geladen wurde: Der Pi lehnt ab, wenn seine Datei inzwischen anders ist
-      await rpc("befehl_anlegen", { p_anlage: fern.id, p_art: "konfig", p_nutzlast: { text: $("fernKonfig").value, basis: await sha256(fern.orig) } });
-      fern.orig = null; $("fernKonfig").value = ""; $("fernKonfig").hidden = true; b.hidden = true; $("fernStand").textContent = "";
+      const text = $("fernKonfig").value, basis = await sha256(orig);
+      if (m !== marke || fernId() !== id) return;
+      await rpc("befehl_anlegen", { p_anlage: id, p_art: "konfig", p_nutzlast: { text, basis } });
+      if (m !== marke) return;
+      fern.orig = null; fern.origId = null; $("fernKonfig").value = ""; $("fernKonfig").hidden = true; b.hidden = true; $("fernStand").textContent = "";
       fernMsg("Gesendet. Der Pi prüft die Konfiguration, speichert sie und startet neu. Das Ergebnis erscheint unten.");
       await loadBefehle();
-    } catch (e) { showErr("fernErr", e); onErr(e); }
+    } catch (e) { if (m === marke) showErr("fernErr", e); onErr(e); }
   });
 
   /* ------------------------------------------------------------ Anmeldung */
   async function enter() {
-    admin = false;
-    try { admin = (await rpc("ist_admin")) === true; } catch (e) { if (e.status === 401) throw e; }
+    const a = anm;
+    let istAdmin = false;
+    try { istAdmin = (await rpc("ist_admin")) === true; } catch (e) { if (e.status === 401) throw e; }
+    if (a !== anm || !sess) return;
+    admin = istAdmin;
     $("addOpen").hidden = !admin;
     current = null;
     show("vList");
@@ -398,16 +448,37 @@
     try { await raw("/auth/v1/user", { method: "PUT", body: JSON.stringify({ password: pw }) }, await token()); $("npw").value = ""; await enter(); }
     catch (e) { showErr("npwErr", e); }
   });
-  $("logout").addEventListener("click", async () => {
-    try { await raw("/auth/v1/logout", { method: "POST" }, sess?.access); } catch (e) { /* egal */ }
+  // Zweistufige Rückfragen («Wirklich?»): gelten nur für die Ansicht, in der sie gestellt wurden, und
+  // nur einige Sekunden. Sonst löste ein einzelner Klick bei einer anderen Anlage die Aktion aus.
+  const SURE = { tokenNew: "Neuen Pi-Token erzeugen", fernUpdate: "Update auslösen", fernKonfigSenden: "Konfiguration senden" };
+  const SURE_MS = 8000, sureT = {};
+  function sureReset(nur) {
+    for (const id of nur ? [nur] : Object.keys(SURE)) { clearTimeout(sureT[id]); $(id).dataset.sure = ""; $(id).textContent = SURE[id]; }
+  }
+  function sure(id, frage) {
+    const b = $(id);
+    if (b.dataset.sure === "1") { sureReset(id); return true; }
+    b.dataset.sure = "1"; b.textContent = frage;
+    clearTimeout(sureT[id]); sureT[id] = setTimeout(() => sureReset(id), SURE_MS);
+    return false;
+  }
+  // Abmelden, auch bei abgelaufener Sitzung (401): nichts vom vorherigen Konto im Dokument stehen lassen.
+  // anm und marke (in show) ändern sich, damit keine noch laufende Abfrage danach etwas einträgt.
+  function abmeldenLokal() {
+    anm++;
     setSess(null); plants = []; current = null; admin = false;
-    // nichts vom vorherigen Konto im Dokument stehen lassen
     ["plants", "members", "summary", "pNow", "pToday", "tokenText", "pName", "pMeta", "pAlarm", "pCurtail", "chDay", "chDays", "who", "memErr"].forEach((id) => { $(id).textContent = ""; });
-    $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true;
+    $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true; $("fAdd").hidden = true;
+    $("pAlarm").hidden = true; $("pCurtail").hidden = true;
     fernLeeren(); $("pFern").hidden = true;
     $("pState").textContent = ""; $("pState").className = "pill";
     ["email", "pw", "mEmail", "npw", "aName", "aOrt", "aKwp"].forEach((id) => { $(id).value = ""; });
     show("vLogin");
+  }
+  $("logout").addEventListener("click", () => {
+    const tok = sess?.access;
+    abmeldenLokal();                                     // zuerst lokal aufräumen, dann dem Server melden
+    if (tok) raw("/auth/v1/logout", { method: "POST" }, tok).catch(() => { /* egal */ });
   });
   $("back").addEventListener("click", () => { current = null; show("vList"); loadList().catch(onErr); });
   let rz;
@@ -425,6 +496,6 @@
       sess = store.load();
     }
     if (!sess) return show("vLogin");
-    try { await enter(); } catch (e) { setSess(null); show("vLogin"); }
+    try { await enter(); } catch (e) { abmeldenLokal(); }
   })();
 })();

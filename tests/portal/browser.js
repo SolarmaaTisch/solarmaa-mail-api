@@ -20,8 +20,8 @@ function ok(was, bedingung, detail = "") {
   console.log(`ok - ${was}`);
 }
 const sql = (stmt) => execFileSync("psql", ["-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-c", stmt], { encoding: "utf8" }).trim();
-function piRunde(token) {
-  const aus = execFileSync("python3", [path.join(REPO, "tests/portal/pi_ablauf.py"), URL_, "--runde", piDir, token], { encoding: "utf8" });
+function piRunde(token, ordner = piDir) {
+  const aus = execFileSync("python3", [path.join(REPO, "tests/portal/pi_ablauf.py"), URL_, "--runde", ordner, token], { encoding: "utf8" });
   return JSON.parse(aus.trim().split("\n").pop());
 }
 
@@ -220,6 +220,60 @@ function piRunde(token) {
   await p.waitForSelector("#mfaOk:not([hidden])");
   await pruefen("Zwei-Faktor bestätigt");
 
+  // ---------------------------------------------------------------- Zwei Anlagen: verspätete Antworten, Rückfragen
+  const A = "Browser-Anlage", B = "Zweite Anlage";
+  const tokB = JSON.parse(sql(`select set_config('request.jwt.claims', '{"sub":"${CHEF}","aal":"aal2"}', false); select public.anlage_anlegen('${B}')`).split("\n").pop()).token;
+  const piDirB = fs.mkdtempSync(path.join(os.tmpdir(), "smpi-browser-b."));
+  ok("zweite Anlage meldet sich", piRunde(tokB, piDirB).fehler === null);
+  const bId = sql(`select id from public.anlagen where name = '${B}'`);
+  const oeffne = async (name) => { await p.tap(`.plant:has-text("${name}")`); await p.waitForFunction((n) => document.querySelector("#pName").textContent === n, name); };
+  const zurListe = async () => { await p.tap("#back"); await p.waitForSelector("#vList:not([hidden]) .plant"); };
+  const gesendet = [];
+  const mitschnitt = (r) => { if (/befehl_anlegen|anlage_token_neu|anlagen_konfig|\/befehle\?/.test(r.url())) gesendet.push(`${r.url()} ${r.postData() || ""}`); };
+  p.on("request", mitschnitt);
+  await zurListe();
+  // Antwort für Anlage A kommt erst, wenn längst Anlage B angezeigt wird
+  const langsamA = new RegExp("/rest/v1/messwerte.*" + aId);
+  await p.route(langsamA, async (route) => { await new Promise((res) => setTimeout(res, 3000)); await route.continue().catch(() => {}); });
+  await oeffne(A); await zurListe(); await oeffne(B);
+  gesendet.length = 0;
+  await p.waitForTimeout(4000);                      // die verspätete Antwort von A ist jetzt da
+  await p.waitForFunction(() => !document.querySelector("#fernUpdate").disabled);
+  ok("verspätete Antwort von A ändert die angezeigte Anlage B nicht", (await p.textContent("#pName")) === B);
+  await p.tap("#fernKonfigLaden"); await p.waitForSelector("#fernKonfig:not([hidden])");
+  const konfigB = await p.inputValue("#fernKonfig");
+  ok("unter Anlage B wird die Konfiguration von B geladen", konfigB.includes('name = "Ablauf Alt"') && !konfigB.includes("Vom Portal geändert"));
+  await zweimal("#fernUpdate"); await warteStand("wartet auf den Pi");
+  const befehle = gesendet.filter((g) => /befehl_anlegen/.test(g));
+  ok("«Update auslösen» geht an die angezeigte Anlage B", befehle.length === 1 && befehle[0].includes(bId), JSON.stringify(befehle));
+  ok("kein einziger Aufruf der Fernwartung mit der ID von A", !gesendet.some((g) => g.includes(aId)), JSON.stringify(gesendet.filter((g) => g.includes(aId))));
+  ok("in der Datenbank: kein neuer Befehl für A", sql(`select count(*) from public.befehle where anlage_id = '${aId}' and status = 'offen'`) === "0");
+  // Konfiguration von B geladen, dann zu A gewechselt: nichts davon bleibt, «senden» ist weg
+  await zurListe(); await p.unroute(langsamA); await oeffne(A);
+  await p.waitForFunction(() => !document.querySelector("#fernUpdate").disabled);
+  ok("nach dem Wechsel zu A: geladene Konfiguration von B ist weg", (await p.inputValue("#fernKonfig")) === "" && (await p.isHidden("#fernKonfigSenden")));
+  sql("update public.befehle set status = 'verfallen' where status = 'offen'");
+  // Rückfrage «Wirklich?» gilt nur für die Anlage, bei der sie gestellt wurde
+  const hashB = () => sql(`select token_hash from public.anlagen where id = '${bId}'`);
+  const vorher2 = hashB();
+  await p.tap("#tokenNew");
+  ok("erster Klick fragt nach", /Wirklich/.test(await p.textContent("#tokenNew")));
+  await p.tap("#fernUpdate");
+  await zurListe(); await oeffne(B);
+  await p.waitForFunction(() => !document.querySelector("#fernUpdate").disabled);
+  ok("Rückfragen sind nach dem Anlagenwechsel zurückgesetzt", (await p.textContent("#tokenNew")) === "Neuen Pi-Token erzeugen" && (await p.textContent("#fernUpdate")) === "Update auslösen");
+  gesendet.length = 0;
+  await p.tap("#tokenNew"); await p.tap("#fernUpdate"); await p.waitForTimeout(700);
+  ok("ein einzelner Klick bei B löst nichts aus", hashB() === vorher2 && !gesendet.some((g) => /anlage_token_neu|befehl_anlegen/.test(g)), JSON.stringify(gesendet));
+  await p.waitForFunction(() => document.querySelector("#tokenNew").textContent === "Neuen Pi-Token erzeugen" && document.querySelector("#fernUpdate").textContent === "Update auslösen", null, { timeout: 15000 });
+  ok("Rückfragen verfallen nach einigen Sekunden von selbst", true);
+  await p.tap("#tokenNew"); await zurListe();
+  ok("Rückfrage ist auch nach dem Wechsel zur Liste zurückgesetzt", (await p.evaluate(() => document.querySelector("#tokenNew").dataset.sure)) !== "1");
+  p.off("request", mitschnitt);
+  await oeffne(A);
+  await pruefen("zwei Anlagen");
+  fs.rmSync(piDirB, { recursive: true, force: true });
+
   // ---------------------------------------------------------------- Ablauf 7: Fernwartung auf dem Pi aus
   fs.writeFileSync(path.join(piDir, "config.toml"), datei().replace("fernwartung = true", "fernwartung = false"));
   piRunde(token);
@@ -232,7 +286,34 @@ function piRunde(token) {
   r = await direkt(`/rest/v1/anlagen_konfig?select=text&anlage_id=eq.${aId}`);
   ok("Fernwartung aus: keine Konfiguration mehr im Portal", r.status === 200 && r.d.length === 1 && r.d[0].text === "", JSON.stringify(r));
   await pruefen("Fernwartung aus");
-  await abmelden();
+
+  // ---------------------------------------------------------------- Sitzung abgelaufen: aufräumen wie beim Abmelden
+  const reste = () => p.evaluate(() => ({ text: ["pName", "pMeta", "pState", "pNow", "pToday", "chDay", "chDays", "members", "plants", "fernBefehle", "who", "fernHinweis"].map((id) => document.getElementById(id).textContent.trim()).join(""),
+    felder: ["email", "mEmail", "fernKonfig"].map((id) => document.getElementById(id).value).join(""), speicher: JSON.stringify(localStorage), fern: document.getElementById("pFern").hidden && document.getElementById("pAdmin").hidden }));
+  await p.route("**/rest/v1/anlagen?*", (route) => route.fulfill({ status: 401, contentType: "application/json", body: '{"message":"JWT expired"}' }));
+  await p.tap("#back"); await p.waitForSelector("#vLogin:not([hidden])");
+  await p.unroute("**/rest/v1/anlagen?*");
+  erwartet(/^401 GET \/rest\/v1\/anlagen/, "abgelaufene Sitzung führt zur Anmeldung");
+  let r2 = await reste();
+  ok("abgelaufene Sitzung: nichts vom Konto bleibt im Dokument oder Speicher", r2.text === "" && r2.felder === "" && r2.speicher === "{}" && r2.fern, JSON.stringify(r2));
+
+  // ---------------------------------------------------------------- Abmelden, während die Anlage noch lädt
+  await anmelden("chef@solarmaa.ch"); await p.waitForSelector(".plant");
+  await p.route("**/rest/v1/anlagen?*id=eq*", async (route) => { await new Promise((res) => setTimeout(res, 2000)); await route.continue().catch(() => {}); });
+  let spaet = 0;
+  const zaehlen = (r) => { if (/\/rest\/v1\/anlagen\?.*id=eq/.test(r.url())) spaet++; };
+  p.on("response", zaehlen);
+  await p.tap(".plant"); await p.waitForSelector("#vPlant:not([hidden])");
+  await p.tap("#logout"); await p.waitForSelector("#vLogin:not([hidden])");
+  ok("Abmelden kam vor der Antwort", spaet === 0);
+  await p.waitForTimeout(3000);                      // die verspätete Antwort ist jetzt da
+  p.off("response", zaehlen);
+  ok("die verspätete Antwort ist nach dem Abmelden eingetroffen", spaet === 1, `(${spaet})`);
+  await p.unroute("**/rest/v1/anlagen?*id=eq*");
+  r2 = await reste();
+  ok("Abmelden während des Ladens: verspätete Antwort trägt nichts mehr ein", r2.text === "" && r2.felder === "" && r2.speicher === "{}" && r2.fern, JSON.stringify(r2));
+  ok("… und die Anmeldeansicht bleibt stehen", (await p.isVisible("#vLogin")) && (await p.isHidden("#vPlant")));
+  antworten.splice(0, antworten.length, ...antworten.filter((a) => !/^401 /.test(a)));      // Abfragen nach dem Abmelden dürfen 401 erhalten
 
   // ---------------------------------------------------------------- Ablauf 3: Kunde und fremdes Konto
   for (const [mail, wer] of [["kunde@example.ch", "Kunde"], ["fremd@example.ch", "Fremder"]]) {
@@ -252,7 +333,7 @@ function piRunde(token) {
     await pruefen(`Ansicht ${wer}`);
     await abmelden();
   }
-  ok("Anlage besteht noch", sql("select count(*) from public.anlagen") === "1");
+  ok("beide Anlagen bestehen noch", sql("select count(*) from public.anlagen") === "2");
   await browser.close();
   fs.rmSync(piDir, { recursive: true, force: true });
 })().catch(async (e) => {

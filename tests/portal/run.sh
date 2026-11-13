@@ -50,6 +50,7 @@ aufraeumen() {
   rm -rf "$TMP"
 }
 trap aufraeumen EXIT
+trap 'exit 130' INT HUP; trap 'exit 143' TERM      # auch bei Abbruch aufräumen (EXIT läuft dann)
 mkdir "$TMP/db" "$TMP/sock" "$TMP/tmp"
 export TMPDIR="$TMP/tmp"              # auch die Temp-Ordner der Testläufe verschwinden am Ende
 chmod 755 "$TMP" "$TMP/sock"; chmod 700 "$TMP/db"
