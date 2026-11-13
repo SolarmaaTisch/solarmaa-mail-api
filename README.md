@@ -22,6 +22,7 @@ Live-Anzeige für Kunden-Solaranlagen im Solarmaa-Design. Ein Raspberry Pi auf d
 | [Portal](docs/13-portal.md) | Solarmaa-Portal im Internet (Supabase + Vercel): Einrichtung, Sicherheit, Ablauf |
 | [Sicherheit und Fernzugriff](docs/12-sicherheit-und-fernzugriff.md) | Erreichbarkeit von aussen, Prüfbefunde, offene Entscheide |
 | [Abregelung bei negativen Preisen](docs/11-abregelung.md) | Day-Ahead (ENTSO-E), Nulleinspeisung, Feldtest PIKO CI |
+| [Batteriesteuerung (Entwurf)](docs/14-batteriesteuerung.md) | Auftrag für die aktive Batteriesteuerung, noch nicht umgesetzt |
 
 ## Schnellstart (Demo auf dem eigenen Rechner)
 
