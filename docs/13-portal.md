@@ -15,6 +15,12 @@ flowchart LR
 
 Noch nicht in Stufe 1: Hausansicht und Rechnungen im Portal (Stufe 2), Fernkonfiguration und Updates über das Portal (Stufe 3), Zwei-Faktor-Anmeldung.
 
+## Stand (13.11.2026)
+
+- Portal: **https://solarmaa-portal.vercel.app** (Vercel-Projekt `solarmaa-portal`, Team tisch1, verbunden mit diesem Repository, Ordner `portal/web`; jeder Push auf den Hauptbranch veröffentlicht neu).
+- Supabase-Projekt SolarmaaPortal: Struktur eingespielt, offene Registrierung aus, Passwort-Mindestlänge 10, Portal-Adresse als Site URL gesetzt, ein Solarmaa-Admin eingetragen.
+- Die Schritte 1 bis 4 unten sind damit erledigt und dienen als Nachschlagewerk.
+
 ## Einrichtung (einmalig)
 
 ### 1. Datenbankstruktur einspielen
