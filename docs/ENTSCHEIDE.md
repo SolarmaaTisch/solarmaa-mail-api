@@ -12,6 +12,7 @@ Diese Liste lesen Planer und Prüfer vor jeder Arbeit. Ein hier aufgeführter Pu
 | E4 | Die App auf dem Pi läuft im Heimnetz über HTTP. Zugriff von aussen nur über das Portal (HTTPS) oder VPN, nie per Portfreigabe. | Kein Zertifikat für lokale Adressen. | 11.11.2026 |
 | E5 | Solaranteil pro Wohnung wird live nach Verbrauch verteilt. | Anzeige, keine Abrechnung. | 10.11.2026 |
 | E6 | Fernbefehle des Portals (Update, Konfiguration) nur von Solarmaa-Konten mit Zwei-Faktor-Anmeldung; der Pi lehnt sie während einer aktiven Abregelung ab. | Portal ist das lohnendste Angriffsziel. | 13.11.2026 |
+| E7 | Fernwartung ist pro Anlage ausgeschaltet, bis in der Pi-Konfiguration `[portal] fernwartung = true` steht. Ist sie ein, darf die Konfiguration über das Portal ganz geändert werden, auch Abregelung, Alarme und Haus. Nur vor Ort änderbar bleiben `[portal]`, `[server]`, `[daten]` (Schutz vor Aussperren) und der Wechsel in den Demo-Modus. Jeder Fernbefehl, «Neuen Pi-Token erzeugen» und «Anlage löschen» verlangen ein Solarmaa-Konto mit Zwei-Faktor. Die maskierte Konfiguration liegt bei eingeschalteter Fernwartung in der Portal-Datenbank. | Entscheid von Tin: alles von fern, aber nur durch Solarmaa mit Zwei-Faktor. | 13.11.2026 |
 
 ## Bekannte Lücken (offen, als Aufgaben geführt)
 
