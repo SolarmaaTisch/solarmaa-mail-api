@@ -22,7 +22,18 @@ Nach der Installation braucht es keine PowerShell und kein SSH mehr:
 
 Während einer Abregelung sind Konfigurationsänderung und Update gesperrt.
 
-**Von fern:** Die Wartung ist nur im Netz des Kunden erreichbar. Für den Zugriff aus dem Büro den Pi mit Tailscale verbinden (siehe unten); dann funktioniert alles oben genauso von überall.
+**Von fern:** Die Wartungsseite des Pi ist nur im Netz des Kunden erreichbar. Update und Konfiguration gehen zusätzlich über das Solarmaa-Portal, wenn die Fernwartung auf dem Pi eingeschaltet ist (nächster Abschnitt). Für alles andere (Benutzer, Geräteerkennung, Alarmtest, SSH) den Pi mit Tailscale verbinden (siehe unten).
+
+## Fernwartung über das Portal
+
+Ab Version 1.6.0, ausführlich in [13-portal.md](13-portal.md), Kapitel «Fernwartung».
+
+- Einschalten nur vor Ort: in der Konfiguration `[portal] fernwartung = true`. Standard ist aus.
+- Im Portal können Solarmaa-Konten mit Zwei-Faktor-Anmeldung dann **Update auslösen** und die **Konfiguration laden, ändern und senden**. Der Pi holt den Befehl bei seiner nächsten Meldung ab (etwa eine Minute), prüft ihn selbst und meldet das Ergebnis.
+- Aus der Ferne nicht änderbar: `[portal]`, `[server]`, `[daten]` und der Demo-Modus.
+- Während einer Abregelung lehnt der Pi Fernbefehle ab, gleich wie die lokale Wartung.
+- Ein Update aus der Ferne läuft über denselben Weg wie der Knopf «Update installieren» (nächster Abschnitt); installiert wird der Stand des Branches in `/etc/solarmaa-dash/update-branch`.
+- Der Pi merkt sich laufende Befehle und noch nicht übermittelte Quittungen in `/var/lib/solarmaa-dash/portal-befehle.json`. Jeder Fernbefehl steht im Protokoll des Dienstes (`journalctl -u solarmaa-dash`, Zeilen «Fernwartung: …»); die Wartungsseite zeigt ihn noch nicht an.
 
 ## Wie das Update funktioniert
 
@@ -71,4 +82,9 @@ Danach ist der Pi im Solarmaa-Tailnet unter `http://solarmaa-muster` erreichbar.
 | «Web-Update nicht eingerichtet» | `install.sh` mit neuer Version erneut ausführen |
 | Update-Protokoll: «Repository nicht erreichbar» | Internet beim Kunden, Deploy-Key |
 | Update-Protokoll: «Tests fehlgeschlagen» | Alte Version läuft weiter. Fehler im Protokoll an die Entwicklung |
+| Portal: Befehl bleibt auf «wartet auf den Pi» | Pi offline, oder Fernwartung auf dem Pi aus (dann nimmt das Portal gar keine Befehle an). Nach einer Stunde verfällt der Befehl |
+| Portal: Befehl bleibt auf «abgeholt, läuft» bzw. «keine Quittung» | Pi hat den Befehl, konnte aber noch nicht antworten (Update läuft, Internet weg, Strom weg). Die Quittung wird nachgeliefert, sobald der Pi wieder meldet. Vor Ort: Update-Protokoll und `portal-befehle.json` ansehen |
+| Portal: Befehl «fehler: Abgelehnt …» | Begründung steht dabei: Abregelung aktiv (später erneut senden), gesperrter Abschnitt, Konfiguration inzwischen geändert (im Portal neu laden), zu viele Befehle in einer Stunde |
+| Portal: «Geheimnis neu eingeben» | Im geänderten Abschnitt steht ein verdecktes Passwort. Den echten Wert statt `********` eintragen |
+| Portal zeigt keine Konfiguration | Fernwartung auf dem Pi aus, oder ein geheimer Wert steht in einer Form in der Datei, die nicht verdeckt werden kann (Warnung in `journalctl -u solarmaa-dash`) |
 | Gerät rot in der Wartung | Meldung daneben; `python3 -m solarmaa_dash geraet-test` per SSH |

@@ -212,6 +212,9 @@ modus = "aus"                 # aus | simulation | test | auto
 # url = "https://<projekt>.supabase.co"
 # schluessel = "sb_publishable_…"
 # token = ""
+# Fernwartung: Mit true darf Solarmaa (nur Konten mit Zwei-Faktor-Anmeldung) über das Portal ein Update
+# auslösen und diese Konfiguration ändern. Standard ist false; der Schalter ist nur vor Ort änderbar.
+# fernwartung = false
 
 [auswertung]
 # Optional. Nur ausfüllen, wenn die Werte für diesen Kunden bekannt sind

@@ -520,6 +520,27 @@ class FristenUndRueckfallTests(unittest.TestCase):
                 cmd_run(args)
 
 
+class PortalVerbindenTests(unittest.TestCase):
+    """pi/portal-verbinden.sh: der eingebettete Python-Teil, der den [portal]-Block schreibt."""
+
+    def test_block_enthaelt_fernwartung(self):
+        import subprocess
+        skript = (Path(__file__).resolve().parent.parent / "pi" / "portal-verbinden.sh").read_text(encoding="utf-8")
+        teil = skript.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        self.assertIn("[portal]", teil)
+        for vorher in ('[anlage]\nname = "X"\n',
+                       '[anlage]\nname = "X"\n\n[portal]\nurl = "https://alt.example"\ntoken = "alt"\n\n[server]\nport = 80\n'):
+            pfad = Path(tempfile.mkdtemp()) / "config.toml"
+            pfad.write_text(vorher, encoding="utf-8")
+            subprocess.run([sys.executable, "-", str(pfad), "https://x.supabase.co", "sb_publishable_x", "a" * 48],
+                           input=teil, text=True, check=True)
+            cfg = config.load(pfad)
+            self.assertIs(cfg["portal"]["fernwartung"], True)
+            self.assertEqual(cfg["portal"]["token"], "a" * 48)
+            self.assertEqual(pfad.read_text().count("[portal]"), 1)
+            self.assertTrue(Portal(cfg).fernwartung)
+
+
 class HochladenTests(unittest.TestCase):
     def test_maskiert_und_nur_bei_aenderung(self):
         u = Umgebung(self)

@@ -13,7 +13,7 @@ Für Zugriff von unterwegs gibt es zwei saubere Wege:
 | Weg | Für wen | Aufwand |
 |---|---|---|
 | **Tailscale** (VPN, verschlüsselt, keine Portfreigabe) | Solarmaa für Wartung; einzelne Kunden mit der Tailscale-App | klein, siehe [07-wartung-und-updates.md](07-wartung-und-updates.md). Mit `tailscale serve` gibt es dazu HTTPS. |
-| **Solarmaa-Portal im Internet** (Pi schickt Daten an einen Solarmaa-Server, Kunden melden sich dort an) | alle Kunden, ohne App-Installation | eigenes Projekt: Server, HTTPS, Konten, Datenschutz. Noch nicht gebaut. |
+| **Solarmaa-Portal im Internet** (Pi schickt Daten an einen Solarmaa-Server, Kunden melden sich dort an) | alle Kunden, ohne App-Installation | eigenes Projekt: Server, HTTPS, Konten, Datenschutz. Gebaut, siehe [13-portal.md](13-portal.md); Fernwartung nur mit Zwei-Faktor (E6, E7). |
 
 ## Was jeder im Netz des Kunden sieht
 
