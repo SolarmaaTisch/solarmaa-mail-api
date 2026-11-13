@@ -59,12 +59,28 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+def _adressen_pruefen(cfg: dict) -> None:
+    """Internet-Adressen der Konfiguration (lokal und aus der Ferne gleich). Leer = nicht benutzt."""
+    from .adressen import pruefe_url
+    b = cfg.get("benachrichtigung") or {}
+    push = b.get("push") if isinstance(b.get("push"), dict) else {}
+    felder = [("smartme.basis_url", (cfg.get("smartme") or {}).get("basis_url"), ("https",)),
+              ("easee.basis_url", (cfg.get("easee") or {}).get("basis_url"), ("https",)),
+              ("benachrichtigung.push.server", push.get("server"), ("http", "https")),
+              ("benachrichtigung.lebenszeichen_url", b.get("lebenszeichen_url"), ("http", "https"))]
+    for was, url, schemata in felder:
+        if url is None or url == "":
+            continue
+        pruefe_url(url, schemata, was)
+
+
 def load(path: str | Path | None) -> dict:
     if path is None:
         return copy.deepcopy(DEFAULTS)
     with open(path, "rb") as fh:
         user = tomllib.load(fh)
     cfg = _merge(DEFAULTS, user)
+    _adressen_pruefen(cfg)
     typ = cfg["quelle"]["typ"]
     if typ not in ("demo", "sunspec"):
         raise ValueError(f"quelle.typ muss 'demo' oder 'sunspec' sein, nicht {typ!r}")

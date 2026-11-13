@@ -24,6 +24,8 @@ _LOCK = threading.Lock()
 
 
 def _req(method: str, url: str, body: dict | None = None, token: str | None = None, timeout: float = 10.0):
+    from ..adressen import pruefe_url
+    pruefe_url(url, ("http", "https"), "easee.basis_url")
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Accept": "application/json", "Content-Type": "application/json",

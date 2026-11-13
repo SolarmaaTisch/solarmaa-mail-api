@@ -137,7 +137,9 @@ class Alarme:
         fehler = []
         if self.push:
             try:
-                server = self.push.get("server", "https://ntfy.sh").rstrip("/")
+                from .adressen import pruefe_url
+                server = pruefe_url(self.push.get("server", "https://ntfy.sh"), ("http", "https"),
+                                    "benachrichtigung.push.server").rstrip("/")
                 hdr = {"Title": titel,
                        "Priority": {"kritisch": "5", "warnung": "4"}.get(stufe, "3"),
                        "Tags": {"kritisch": "rotating_light", "warnung": "warning"}.get(stufe, "white_check_mark")}

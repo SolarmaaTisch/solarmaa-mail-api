@@ -37,9 +37,19 @@ def _digest_header(www: str, method: str, url: str, user: str, password: str) ->
             f'algorithm={algo}, response="{resp}"{extra}{opaque}')
 
 
+def _nur_http(url: str) -> None:
+    """Nie file:, ftp: o. ä. öffnen, auch wenn die Konfiguration das zuliesse."""
+    from ..adressen import pruefe_url
+    try:
+        pruefe_url(url, ("http", "https"), "Geräteadresse")
+    except ValueError as e:
+        raise GeraetFehler(str(e)) from None
+
+
 def get_json(url: str, timeout: float = 5.0, user: str | None = None, password: str | None = None,
              headers: dict | None = None):
     hdrs = {"Accept": "application/json", "User-Agent": "SolarmaaDash/1.1", **(headers or {})}
+    _nur_http(url)
     req = urllib.request.Request(url, headers=hdrs)
     try:
         try:
@@ -68,6 +78,7 @@ def get_raw(url: str, timeout: float = 5.0, user: str | None = None, password: s
             headers: dict | None = None) -> int:
     """GET ohne JSON-Auswertung (z. B. zum Schalten). Gibt den HTTP-Status zurück."""
     hdrs = {"User-Agent": "SolarmaaDash/1.4", **(headers or {})}
+    _nur_http(url)
     req = urllib.request.Request(url, headers=hdrs)
     try:
         try:

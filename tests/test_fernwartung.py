@@ -743,6 +743,84 @@ class PortalVerbindenTests(unittest.TestCase):
             self.assertEqual(cfg["server"]["port"], 80)
 
 
+class AdressenTests(unittest.TestCase):
+    """Befund B4: urllib öffnet auch file:// und ftp://; Adressen aus der Konfiguration nur http(s)."""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self.geheim = self.d / "geheim.json"
+        self.geheim.write_text('{"Devices": [{"Id": "lokal"}], "passwort": "' + PASSWORT + '"}')
+
+    def _laden(self, toml: str):
+        pfad = self.d / "c.toml"
+        pfad.write_text(toml, encoding="utf-8")
+        return config.load(pfad)
+
+    def test_konfiguration_lehnt_fremde_schemata_ab(self):
+        datei = self.geheim.as_uri()
+        for abschnitt, feld, gut in (("[smartme]", "basis_url", ["https://api.smart-me.com"]),
+                                     ("[easee]", "basis_url", ["https://api.easee.com"]),
+                                     ("[benachrichtigung.push]", "server", ["https://ntfy.sh", "http://ntfy.intern"]),
+                                     ("[benachrichtigung]", "lebenszeichen_url", ["https://hc-ping.com/abc", "http://192.0.2.4/ping"])):
+            for schlecht in (datei, f"{datei}#/Devices", "ftp://192.0.2.1/x", "https://", "http:///etc/passwd", "gopher://x",
+                             "api.smart-me.com", "HTTPS"):
+                with self.assertRaisesRegex(ValueError, feld, msg=f"{abschnitt} {feld} = {schlecht}"):
+                    self._laden(f'{abschnitt}\n{feld} = "{schlecht}"\n')
+            for ok in gut:
+                self._laden(f'{abschnitt}\n{feld} = "{ok}"\n')
+            self._laden(f'{abschnitt}\n{feld} = ""\n')                     # leer = nicht benutzt
+        for nur_https in ("smartme", "easee"):
+            with self.assertRaisesRegex(ValueError, "https://"):
+                self._laden(f'[{nur_https}]\nbasis_url = "http://api.example"\n')
+        self._laden("")                                                          # Standardwerte sind gültig
+
+    def test_fern_und_lokal_abgelehnt(self):
+        u = Umgebung(self)
+        m = maskieren(u.text)
+        boese = m.replace("https://api.smart-me.com", self.geheim.as_uri() + "#")
+        text = self._abgelehnt(u, boese)
+        self.assertIn("basis_url", text)
+        with self.assertRaisesRegex(ValueError, "basis_url"):
+            u.state.konfig.speichern(boese, "admin")
+        self.assertEqual(u.pfad.read_text(), u.text)
+
+    def _abgelehnt(self, u, text):
+        u.lauf([u.konfig_befehl(1, text)])
+        (bid, ok, t), = u.quittungen()
+        self.assertFalse(ok)
+        self.assertEqual(u.neustarts, 0)
+        return t
+
+    def test_aufrufstellen_oeffnen_keine_datei(self):
+        from solarmaa_dash.benachrichtigung import Alarme
+        from solarmaa_dash.geraete import GeraetFehler
+        from solarmaa_dash.geraete.easee import EaseeKonto
+        from solarmaa_dash.geraete.http import get_json, get_raw
+        from solarmaa_dash.geraete.smartme import SmartMeKonto
+        datei = self.geheim.as_uri()
+        for f in (get_json, get_raw):
+            with self.assertRaisesRegex(GeraetFehler, "http"):
+                f(datei + "#/Devices")
+        with self.assertRaises(Exception) as cm:
+            SmartMeKonto(datei + "#", "k", None, None).geraete()
+        self.assertNotIn("lokal", str(cm.exception))
+        with self.assertRaisesRegex(Exception, "basis_url"):
+            EaseeKonto("a@b.ch", "x", datei + "#").zustand("EH123")
+        # Push auf file: gilt nicht als versendet, sondern als Fehler
+        a = Alarme({"anlage": {"name": "T"}, "benachrichtigung": {"push": {"server": datei + "#", "thema": "t"}}})
+        with self.assertRaisesRegex(Exception, "Push: .*push.server"):
+            a._senden("Titel", "Text", "warnung")
+
+    def test_portal_url_genau_pruefen(self):
+        basis = {"schluessel": "k", "token": TOKEN}
+        for gut in ("https://abc.supabase.co", "http://127.0.0.1:8090", "http://localhost:8090"):
+            Portal(config._merge(config.DEFAULTS, {"portal": {**basis, "url": gut}}))
+        for schlecht in ("http://boese.example/?127.0.0.1", "http://127.0.0.1.boese.example", "http://boese.example#127.0.0.1",
+                         "file:///etc/passwd?127.0.0.1", "ftp://127.0.0.1", "https://", "http://unsicher.example"):
+            with self.assertRaisesRegex(ValueError, "portal.url", msg=schlecht):
+                Portal(config._merge(config.DEFAULTS, {"portal": {**basis, "url": schlecht}}))
+
+
 class HochladenTests(unittest.TestCase):
     def test_maskiert_und_nur_bei_aenderung(self):
         u = Umgebung(self)

@@ -32,8 +32,10 @@ class Portal:
         self.token = p.get("token") or ""
         self.intervall_s = max(30.0, float(p.get("intervall_s", 60)))
         self.aktiv = bool(self.url and self.schluessel and self.token)
-        if self.aktiv and not self.url.startswith("https://") and "127.0.0.1" not in self.url:
-            raise ValueError("portal.url muss mit https:// beginnen")
+        if self.aktiv:
+            # https Pflicht; http nur für einen Testdienst auf diesem Rechner (genau 127.0.0.1/localhost)
+            from .adressen import pruefe_url
+            pruefe_url(self.url, ("https",), "portal.url", lokal_http=True)
         fw = p.get("fernwartung", False)
         if not isinstance(fw, bool):         # "false" als Text wäre sonst wahr
             raise ValueError("portal.fernwartung muss true oder false sein")
@@ -54,6 +56,11 @@ class Portal:
     def rpc(self, fn: str, args: dict) -> tuple[int, object]:
         """Ruft eine Funktion des Portals auf. Liefert (HTTP-Status, Antwort); Status 0 = nicht erreichbar.
         Wirft nie; der Token steht nur im Körper der Anfrage und in keinem Fehlertext."""
+        from .adressen import pruefe_url
+        try:
+            pruefe_url(self.url, ("https",), "portal.url", lokal_http=True)
+        except ValueError as e:
+            return 0, str(e)
         req = urllib.request.Request(f"{self.url}/rest/v1/rpc/{fn}", data=json.dumps(args).encode(), method="POST",
                                      headers={"apikey": self.schluessel, "Authorization": f"Bearer {self.schluessel}",
                                               "Content-Type": "application/json",
