@@ -78,7 +78,7 @@ def parse_entsoe(xml_text: str) -> dict[int, tuple[int, float]]:
 
 def parse_csv(text: str, raster_s: int = 900) -> dict[int, tuple[int, float]]:
     zeilen = []
-    for z in text.splitlines():
+    for nr, z in enumerate(text.splitlines(), 1):
         z = z.strip()
         if not z or z.startswith("#") or z.lower().startswith(("zeit", "time", "datum")):
             continue
@@ -86,9 +86,17 @@ def parse_csv(text: str, raster_s: int = 900) -> dict[int, tuple[int, float]]:
         if len(teil) < 2:
             continue
         ts_text = teil[0].strip().replace(" ", "T")
-        t = dt.datetime.fromisoformat(ts_text)
-        ts = int(t.timestamp()) if t.tzinfo is None else int(t.astimezone(dt.timezone.utc).timestamp())
-        zeilen.append((ts, float(teil[1].strip().replace("'", ""))))
+        # Fehlermeldungen nennen nur Zeile und Art des Fehlers, nie den Inhalt: Sie gehen als Alarm ins Portal.
+        try:
+            t = dt.datetime.fromisoformat(ts_text)
+            ts = int(t.timestamp()) if t.tzinfo is None else int(t.astimezone(dt.timezone.utc).timestamp())
+        except (ValueError, OverflowError, OSError):
+            raise ValueError(f"Preisdatei Zeile {nr}: Zeitpunkt nicht lesbar (erwartet JJJJ-MM-TT HH:MM)") from None
+        try:
+            preis = float(teil[1].strip().replace("'", ""))
+        except ValueError:
+            raise ValueError(f"Preisdatei Zeile {nr}: Preis ist keine Zahl") from None
+        zeilen.append((ts, preis))
     zeilen.sort()
     out = {}
     for i, (ts, preis) in enumerate(zeilen):
@@ -145,7 +153,13 @@ class Preise:
                 with urllib.request.urlopen(req, timeout=20) as r:
                     neu = parse_entsoe(r.read().decode("utf-8"))
             elif self.quelle == "csv":
-                neu = parse_csv(Path(self.csv_pfad).read_text(encoding="utf-8-sig"))
+                try:
+                    inhalt = Path(self.csv_pfad).read_text(encoding="utf-8-sig")
+                except UnicodeDecodeError:
+                    raise ValueError("Preisdatei ist keine Textdatei (UTF-8)") from None
+                except OSError as e:
+                    raise ValueError(f"Preisdatei nicht lesbar ({type(e).__name__})") from None
+                neu = parse_csv(inhalt)
             else:
                 neu = {}
             with self.lock:

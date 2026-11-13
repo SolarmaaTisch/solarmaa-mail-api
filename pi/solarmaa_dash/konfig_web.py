@@ -64,7 +64,9 @@ def demaskieren(neu: str, alt: str) -> str:
     for i, k, m in _geheimnisse(neu):
         if m.group(2) == MASKE:
             if k not in alte:
-                raise ValueError(f"Zeile {i + 1}: Platzhalter {MASKE} ohne gespeicherten Wert. Bitte den echten Wert eintragen.")
+                raise ValueError(f"Zeile {i + 1}: Platzhalter {MASKE} ohne gespeicherten Wert. Bitte den echten Wert eintragen. "
+                                 "Wurden Einträge eingefügt, verschoben oder gelöscht, sind die Geheimnisse der "
+                                 "nachfolgenden Einträge neu einzugeben.")
             zeilen[i] = f'{m.group(1)}"{alte[k]}"{m.group(3)}'
     return "\n".join(zeilen)
 
@@ -187,6 +189,9 @@ def fern_pruefen(cfg_neu: dict, cfg_alt: dict) -> None:
     if (ist_demo(cfg_neu) and not ist_demo(cfg_alt)) or \
             (cfg_neu["quelle"].get("typ") == "demo" and cfg_alt["quelle"].get("typ") != "demo"):
         raise ValueError("Der Demo-Modus (quelle.typ = \"demo\" ohne Geräte) kann nur vor Ort eingeschaltet werden")
+    # Pfad einer lokalen Datei: Aus der Ferne gesetzt, liesse sich damit eine beliebige Datei des Pi einlesen.
+    if cfg_neu["abregelung"].get("csv_pfad", "") != cfg_alt["abregelung"].get("csv_pfad", ""):
+        raise ValueError("csv_pfad kann nur vor Ort geändert werden")
     if cfg_neu["haus"].get("demo") and not cfg_alt["haus"].get("demo"):
         raise ValueError("Der Demo-Modus ([haus] demo) kann nur vor Ort eingeschaltet werden")
 

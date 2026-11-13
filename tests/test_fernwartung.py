@@ -374,6 +374,54 @@ class KonfigFernTests(unittest.TestCase):
         self.assertIn('name = "Neu"', u.pfad.read_text())
         self.assertIn("[notizen]", u.pfad.read_text())
 
+    def test_csv_pfad_nur_vor_ort_und_fehler_ohne_dateiinhalt(self):
+        """Befund M1: csv_pfad auf eine fremde Datei, deren Inhalt in der Fehlermeldung (Alarm im Portal) landet."""
+        from solarmaa_dash.preise import Preise, parse_csv
+        u = Umgebung(self)
+        m = maskieren(u.text)
+        csv = f'\n[abregelung]\npreisquelle = "csv"\ncsv_pfad = "{u.pfad}"\n'
+        self._abgelehnt(u, u.konfig_befehl(1, m + csv), "csv_pfad kann nur vor Ort geändert werden")
+        # vor Ort gesetzt: bleibt aus der Ferne erhalten, andere Werte in [abregelung] sind änderbar, der Pfad nicht
+        preise = u.d / "preise.csv"
+        preise.write_text("Zeit;Preis\n2026-06-21 12:00;-4.2\n")
+        u.text += f'\n[abregelung]\npreisquelle = "csv"\ncsv_pfad = "{preise}"\nschwelle = 0.0\n'
+        u.pfad.write_text(u.text)
+        m = maskieren(u.text)
+        u.srv.posts.clear()
+        self._abgelehnt(u, u.konfig_befehl(2, m.replace(str(preise), str(u.pfad))), "csv_pfad kann nur vor Ort")
+        u.srv.posts.clear()
+        u.lauf([u.konfig_befehl(3, m.replace("schwelle = 0.0", "schwelle = -3.0"))])
+        self.assertEqual(u.neustarts, 1)
+        # Fehlermeldungen nennen Zeile und Art, nie den Inhalt
+        fremd = f'[easee]\npasswort = "easee,{PASSWORT}"\napi_key = "{API_KEY};x"\n'
+        for text, muster in ((fremd, "Zeile 2: Zeitpunkt nicht lesbar"),
+                             ("2026-06-21 12:00;-4.2\n2026-06-21 12:15;" + PASSWORT + "\n", "Zeile 2: Preis ist keine Zahl")):
+            with self.assertRaisesRegex(ValueError, muster) as cm:
+                parse_csv(text)
+            for geheim in (API_KEY, PASSWORT, TOKEN, "smartme", "easee"):
+                self.assertNotIn(geheim, str(cm.exception))
+        self.assertEqual(len(parse_csv("Zeit;Preis\n2026-06-21 12:00;-4.2\n2026-06-21 12:15;1.0\n")), 2)
+        (u.d / "fremd.toml").write_text(fremd)
+        for datei in (u.d / "fremd.toml", u.d / "gibt-es-nicht.csv"):
+            pr = Preise({"preisquelle": "csv", "csv_pfad": str(datei)}, None)
+            pr.aktualisieren()
+            self.assertIn("Preise nicht abrufbar: Preisdatei", pr.fehler)
+            for geheim in (API_KEY, PASSWORT, TOKEN, "passwort", "api_key"):
+                self.assertNotIn(geheim, pr.fehler)
+
+    def test_hinweis_bei_eingefuegtem_eintrag(self):
+        u = Umgebung(self)
+        geraet = '\n[[geraet]]\nname = "A"\ntyp = "shelly"\nrolle = "netz"\nhost = "192.0.2.7"\npasswort = "geraet-passwort-1"\n'
+        u.text += geraet
+        u.pfad.write_text(u.text)
+        m = maskieren(u.text)
+        neu = m.replace("\n[[geraet]]", '\n[[geraet]]\nname = "Neu"\ntyp = "shelly"\nrolle = "pv"\nhost = "192.0.2.8"\n\n[[geraet]]', 1)
+        text = self._abgelehnt(u, u.konfig_befehl(1, neu), "Geheimnis(se)? .*neu ein")
+        self.assertRegex(text, "eingefügt|verschoben")
+        zwei = m + '\n[[geraet]]\nname = "C"\ntyp = "shelly"\nrolle = "pv"\nhost = "192.0.2.9"\npasswort = "' + MASKE + '"\n'
+        u.srv.posts.clear()
+        self._abgelehnt(u, u.konfig_befehl(2, zwei), "nachfolgenden Einträge neu einzugeben")
+
     def test_abgelehnt_solange_freigabe_aussteht(self):
         wr = lambda letzte, fehler=None: types.SimpleNamespace(letzte_w=letzte, nenn_w=60000.0, fehler=fehler)  # noqa: E731
         abr = lambda unbekannt, *w: types.SimpleNamespace(aktiv=False, modus="auto", unbekannt=unbekannt, wr=list(w))  # noqa: E731
@@ -460,6 +508,29 @@ class AblaufTests(unittest.TestCase):
         self.assertTrue(any("nicht schreibbar" in z for z in logs.output))
         u.fw.verarbeiten([u.konfig_befehl(1, m.replace('"Alt"', '"Eins"'))])      # auch später nicht doch noch
         self.assertEqual(u.pfad.read_text(), u.text)
+
+    def test_zustand_nach_dem_speichern_nicht_schreibbar_startet_trotzdem_neu(self):
+        """Befund T1: Die Konfiguration steht auf der Platte, die Markierung «gespeichert» lässt sich nicht schreiben."""
+        from solarmaa_dash import fernwartung
+        u = Umgebung(self)
+        echt = fernwartung._schreiben
+
+        def schreiben(datei, z):
+            if z.get("wartend") and z["wartend"].get("gespeichert"):
+                raise OSError("Platte voll")
+            return echt(datei, z)
+
+        with mock.patch.object(fernwartung, "_schreiben", side_effect=schreiben), \
+                self.assertLogs("solarmaa_dash", level=logging.ERROR):
+            u.fw.verarbeiten([u.konfig_befehl(1, maskieren(u.text).replace('"Alt"', '"Eins"'))])
+        self.assertIn('name = "Eins"', u.pfad.read_text())
+        self.assertEqual(u.neustarts, 1)                                          # Datei und Dienst fallen nicht auseinander
+        self.assertEqual(u.fw.z["quittungen"], [])                                # keine falsche Fehlquittung
+        self.assertFalse(json.loads((u.d / DATEI).read_text())["wartend"]["gespeichert"])
+        u.neu().nachlauf()                                                        # nach dem Neustart: vorsichtig, nie «erledigt»
+        (bid, ok, text), = u.quittungen()
+        self.assertEqual((bid, ok), (ID(1), False))
+        self.assertRegex(text, "wurde geändert.*neu laden und prüfen")
 
     def test_quittung_bleibt_bei_portalfehler_liegen(self):
         u = Umgebung(self, routen={})                                             # Portal antwortet mit 404

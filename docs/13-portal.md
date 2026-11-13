@@ -94,6 +94,7 @@ Grundlage sind die Entscheide E6 und E7 in [`ENTSCHEIDE.md`](ENTSCHEIDE.md).
 Die ganze Konfiguration, auch `[abregelung]`, `[benachrichtigung]` und `[haus]`. **Nur vor Ort** änderbar bleiben:
 
 - `[portal]`, `[server]`, `[daten]` (sonst könnte man sich aussperren, auch den Schalter `fernwartung` selbst),
+- `[abregelung] csv_pfad` (Pfad einer lokalen Datei; aus der Ferne gesetzt, liesse sich damit eine beliebige Datei des Pi einlesen),
 - der Wechsel in den Demo-Modus (`quelle.typ = "demo"` bzw. das Entfernen aller Geräte bei `typ = "demo"`, `[haus] demo = true`; siehe Lücke L7).
 
 Lokal wie aus der Ferne gilt ausserdem: `profil` ist immer der **Name** eines mitgelieferten Profils (Kleinbuchstaben, Ziffern, `_`), nie ein Pfad; und neue oberste Abschnitte, die das Programm nicht kennt, werden abgelehnt.

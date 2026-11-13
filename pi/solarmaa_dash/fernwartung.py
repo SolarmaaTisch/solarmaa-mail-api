@@ -269,7 +269,13 @@ class Fernwartung:
                            else f"Speichern fehlgeschlagen ({type(e).__name__})")
             return False
         self.z["wartend"].update(gespeichert=True, sicherung=str(sicherung) if sicherung else None)
-        self._sichern()
+        try:
+            self._sichern()
+        except RuntimeError as e:
+            # Die Konfiguration ist geprüft und steht auf der Platte: trotzdem neu starten, damit Datei
+            # und laufender Dienst nicht auseinanderfallen. Auf der Platte steht noch «nicht gespeichert»;
+            # nach dem Neustart wird darum vorsichtig quittiert («neu laden und prüfen»), nie fälschlich «erledigt».
+            log.error("Fernwartung: konfig %s – gespeichert, aber %s. Dienst startet trotzdem neu.", bid, e)
         log.warning("Fernwartung: konfig %s – gespeichert, Dienst startet neu", bid)
         self.state.konfig.neustart()
         return True
@@ -296,7 +302,8 @@ class Fernwartung:
                     gleich = alt is not None and \
                         hashlib.sha256(maskieren(alt).encode("utf-8")).hexdigest() == w.get("basis")
                     ergebnis = False, ("Neustart vor dem Speichern, nichts geändert" if gleich else
-                                       "Neustart während des Speicherns. Konfiguration im Portal neu laden und prüfen.")
+                                       "Neustart während des Speicherns: Die Konfiguration auf dem Pi wurde geändert, "
+                                       "der Abschluss ist nicht bestätigt. Im Portal neu laden und prüfen.")
             elif alter > FRIST_NEUSTART_S:
                 ergebnis = False, ("Neustart ist ausgeblieben. Die Konfiguration ist gespeichert und gilt "
                                    "ab dem nächsten Neustart des Dienstes.")
