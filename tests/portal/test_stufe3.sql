@@ -15,7 +15,7 @@ select t.gleich('hat_2fa mit aal2', public.hat_2fa(), true);
 
 -- ---------------------------------------------------------------- Fernwartung aus
 select t.scheitert('Befehl an Anlage ohne Fernwartung abgelehnt',
-                   format($$select public.befehl_anlegen(%L, 'update')$$, :'a_id'), '55000');
+                   format($$select public.befehl_anlegen(%L, 'update')$$, :'a_id'), 'P0001');
 -- alter Pi (meldet den Schalter nicht) und Pi mit unsinnigem Wert: bleibt aus, Meldung gelingt
 select t.als('');
 select t.gleich('Meldung ohne Schalter gelingt', public.pi_melden(:'a_tok', '{"status":"ok"}') -> 'befehle', '[]'::jsonb);

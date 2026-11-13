@@ -84,7 +84,7 @@ Danach ist der Pi im Solarmaa-Tailnet unter `http://solarmaa-muster` erreichbar.
 | Update-Protokoll: «Tests fehlgeschlagen» | Alte Version läuft weiter. Fehler im Protokoll an die Entwicklung |
 | Portal: Befehl bleibt auf «wartet auf den Pi» | Pi offline, oder Fernwartung auf dem Pi aus (dann nimmt das Portal gar keine Befehle an). Nach einer Stunde verfällt der Befehl |
 | Portal: Befehl bleibt auf «abgeholt, läuft» bzw. «keine Quittung» | Pi hat den Befehl, konnte aber noch nicht antworten (Update läuft, Internet weg, Strom weg). Die Quittung wird nachgeliefert, sobald der Pi wieder meldet. Vor Ort: Update-Protokoll und `portal-befehle.json` ansehen |
-| Portal: Befehl «fehler: Abgelehnt …» | Begründung steht dabei: Abregelung aktiv (später erneut senden), gesperrter Abschnitt, Konfiguration inzwischen geändert (im Portal neu laden), zu viele Befehle in einer Stunde |
+| Portal: Befehl «fehler: Abgelehnt …» | Begründung steht dabei: Abregelung aktiv oder Freigabe eines Wechselrichters steht noch aus (später erneut senden; bleibt es dabei, vor Ort die Abregelung prüfen), gesperrter Abschnitt, Konfiguration inzwischen geändert (im Portal neu laden), zu viele Befehle in einer Stunde |
 | Portal: «Geheimnis neu eingeben» | Im geänderten Abschnitt steht ein verdecktes Passwort. Den echten Wert statt `********` eintragen |
 | Portal zeigt keine Konfiguration | Fernwartung auf dem Pi aus, oder ein geheimer Wert steht in einer Form in der Datei, die nicht verdeckt werden kann (Warnung in `journalctl -u solarmaa-dash`) |
 | Gerät rot in der Wartung | Meldung daneben; `python3 -m solarmaa_dash geraet-test` per SSH |

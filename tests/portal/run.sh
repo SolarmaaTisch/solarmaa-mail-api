@@ -4,17 +4,19 @@
 #
 #   tests/portal/run.sh             Datenbankregeln + Pi-Ablauf
 #   tests/portal/run.sh --browser   zusätzlich die Portal-Seite im Browser (braucht Playwright)
+#   tests/portal/run.sh --hand      keine Tests: Datenbank und Attrappe starten und stehen lassen (Strg+C beendet)
 #
 # Exit 0 = alles bestanden, 1 = Prüfung fehlgeschlagen, 2 = Voraussetzung fehlt. Siehe README.md.
 set -euo pipefail
 HIER=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HIER/../.." && pwd)
 SCHEMA="$REPO/portal/supabase/schema.sql"
-BROWSER=0
+BROWSER=0; HAND=0
 case "${1:-}" in
   "") ;;
   --browser) BROWSER=1 ;;
-  *) echo "Aufruf: $0 [--browser]"; exit 2 ;;
+  --hand) HAND=1 ;;
+  *) echo "Aufruf: $0 [--browser | --hand]"; exit 2 ;;
 esac
 
 # ---------------------------------------------------------------- Postgres finden
@@ -97,6 +99,23 @@ attrappe() {      # attrappe <datenbank>  -> setzt URL
   done
   cat "$TMP/attrappe-$1.log"; echo "Attrappe startet nicht."; exit 1
 }
+
+# ---------------------------------------------------------------- Von Hand (für den Tester)
+if [[ $HAND -eq 1 ]]; then
+  createdb hand
+  schritt "Datenbank «hand» (stub.sql, schema.sql, Testhilfen)" bash -c "$(declare -f sqldatei); sqldatei hand '$HIER/stub.sql' && sqldatei hand '$SCHEMA' && sqldatei hand '$HIER/hilfen.sql'"
+  psql -X -q -d hand -c "insert into public.admins (user_id) values ('00000000-0000-0000-0000-000000000001')"
+  attrappe hand
+  cat <<TEXT
+
+Portal:      $URL/      (Konten und Passwort: tests/portal/README.md, Zwei-Faktor-Code 424242)
+Datenbank:   PGHOST=$PGHOST PGPORT=$PGPORT psql -U postgres -d hand
+Pi spielen:  python3 $HIER/pi_ablauf.py $URL --runde /tmp/pi-hand TOKEN
+Beenden:     Strg+C (Datenbank und Attrappe werden gelöscht; /tmp/pi-hand bei Bedarf selbst löschen)
+TEXT
+  wait "${ATTRAPPEN[0]}" || true
+  exit 0
+fi
 
 # ---------------------------------------------------------------- 1. Neue Datenbank
 echo "==> Neue Datenbank"

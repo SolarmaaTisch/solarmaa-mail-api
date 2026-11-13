@@ -94,9 +94,11 @@ Grundlage sind die Entscheide E6 und E7 in [`ENTSCHEIDE.md`](ENTSCHEIDE.md).
 Die ganze Konfiguration, auch `[abregelung]`, `[benachrichtigung]` und `[haus]`. **Nur vor Ort** änderbar bleiben:
 
 - `[portal]`, `[server]`, `[daten]` (sonst könnte man sich aussperren, auch den Schalter `fernwartung` selbst),
-- der Wechsel in den Demo-Modus (`quelle.typ = "demo"`, `[haus] demo = true`; siehe Lücke L7).
+- der Wechsel in den Demo-Modus (`quelle.typ = "demo"` bzw. das Entfernen aller Geräte bei `typ = "demo"`, `[haus] demo = true`; siehe Lücke L7).
 
-Geheime Werte (Passwörter, Tokens, API-Keys, ntfy-Thema, Lebenszeichen-Adresse) verlassen den Pi nie: Im Portal stehen sie als `********` und bleiben beim Speichern erhalten. Wer in einem Abschnitt etwas ändert, der ein solches verdecktes Geheimnis enthält (z. B. `host` oder `basis_url`), muss das Geheimnis neu eintippen. So kann niemand ein gespeichertes Passwort an eine andere Adresse schicken lassen. Steht ein Geheimnis in einer Form in der Datei, die sich nicht verdecken lässt (einfache Anführungszeichen, mehrzeilig), überträgt der Pi die Konfiguration gar nicht und schreibt eine Warnung ins Protokoll (`journalctl -u solarmaa-dash`; auch in `/api/wartung`, Feld `portal.konfig_hinweis`).
+Lokal wie aus der Ferne gilt ausserdem: `profil` ist immer der **Name** eines mitgelieferten Profils (Kleinbuchstaben, Ziffern, `_`), nie ein Pfad; und neue oberste Abschnitte, die das Programm nicht kennt, werden abgelehnt.
+
+Geheime Werte (Passwörter, Tokens, API-Keys, ntfy-Thema, Lebenszeichen-Adresse) verlassen den Pi nie: Im Portal stehen sie als `********` und bleiben beim Speichern erhalten. Wer in einem Abschnitt etwas ändert, der ein solches verdecktes Geheimnis enthält (z. B. `host` oder `basis_url`), muss das Geheimnis neu eintippen. Das gilt auch, wenn Einträge wie `[[geraet]]` verschoben, eingefügt oder gelöscht werden (die Zuordnung läuft über die Reihenfolge). So kann niemand ein gespeichertes Passwort an eine andere Adresse schicken lassen. Mehrzeilige Zeichenketten (`'''`, `"""`) nimmt der Pi über das Portal nicht an. Steht ein Geheimnis in einer Form in der Datei, die sich nicht verdecken lässt (einfache Anführungszeichen, mehrzeilig), überträgt der Pi die Konfiguration gar nicht und schreibt eine Warnung ins Protokoll (`journalctl -u solarmaa-dash`; auch in `/api/wartung`, Feld `portal.konfig_hinweis`).
 
 ### Ablauf und Zustände
 
@@ -113,7 +115,7 @@ Geheime Werte (Passwörter, Tokens, API-Keys, ntfy-Thema, Lebenszeichen-Adresse)
 | fehler | abgelehnt oder fehlgeschlagen, mit Begründung des Pi |
 | keine Quittung | abgeholt, aber seit 45 Minuten keine Antwort (Pi offline, Stromausfall). Eine späte Quittung kommt noch an |
 
-Der Pi lehnt ab: bei ausgeschalteter Fernwartung, **während einer Abregelung** (auch im Modus `simulation`), solange ein anderer Befehl läuft, ab dem siebten Befehl in einer Stunde, bei ungültiger Konfiguration, bei einer Änderung an gesperrten Abschnitten und wenn die Konfiguration auf dem Pi seit dem Laden im Portal geändert wurde («neu laden»).
+Der Pi lehnt ab: bei ausgeschalteter Fernwartung, **während einer Abregelung** (auch im Modus `simulation`) und solange danach die Freigabe eines Wechselrichters aussteht (Zustand nach dem Start unbekannt, letzte Vorgabe unter Nennleistung oder Schreibfehler), solange ein anderer Befehl läuft, ab dem siebten Befehl in einer Stunde, bei ungültiger Konfiguration, bei einer Änderung an gesperrten Abschnitten und wenn die Konfiguration auf dem Pi seit dem Laden im Portal geändert wurde («neu laden»).
 
 Fristen: Befehl verfällt nach 1 Stunde; fehlender Neustart wird nach 5 Minuten, fehlendes Update-Ergebnis nach 20 Minuten als Fehler quittiert. Wie lange ein Update auf einem echten Pi dauert, ist nicht gemessen.
 

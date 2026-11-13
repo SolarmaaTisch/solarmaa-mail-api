@@ -5,6 +5,7 @@ Prüft die Datenbankregeln (`portal/supabase/schema.sql`), den Ablauf Pi ↔ Por
 ```bash
 tests/portal/run.sh             # Datenbankregeln + Pi-Ablauf (etwa 20 Sekunden)
 tests/portal/run.sh --browser   # zusätzlich die Portal-Seite im Browser, Handy-Format (etwa 1 Minute)
+tests/portal/run.sh --hand      # keine Tests: Datenbank und Attrappe für Prüfungen von Hand starten
 ```
 
 Ergebnis: am Schluss «N Prüfungen bestanden» und Exit-Code 0. Bei einem Fehler zeigt das Skript die Ausgabe des betroffenen Schritts und endet mit 1; fehlt eine Voraussetzung, mit 2.
@@ -53,30 +54,23 @@ Zwei-Faktor-Code: `424242`. Das Passwort und der Code gelten nur in `fake_supaba
 
 ## Von Hand (für den Tester)
 
-`run.sh` räumt am Ende alles weg. Für Prüfungen im eigenen Browser Datenbank und Attrappe selbst starten (als normaler Benutzer; als root die drei Postgres-Befehle mit `runuser -u postgres --` und einem Ordner, der `postgres` gehört):
-
 ```bash
-PGBIN=/usr/lib/postgresql/16/bin; T=$(mktemp -d /tmp/smpg.XXXXXX)
-$PGBIN/initdb -D $T/db --auth=trust -U postgres >/dev/null
-$PGBIN/pg_ctl -D $T/db -w -o "-c listen_addresses='' -c unix_socket_directories=$T -c port=54329" start
-export PGHOST=$T PGPORT=54329 PGUSER=postgres PGDATABASE=hand
-createdb hand
-for f in tests/portal/stub.sql portal/supabase/schema.sql tests/portal/hilfen.sql; do psql -q -v ON_ERROR_STOP=1 -f $f; done
-psql -c "insert into public.admins values ('00000000-0000-0000-0000-000000000001')"
-python3 tests/portal/fake_supabase.py portal/web 8090 &      # Portal: http://127.0.0.1:8090/
+tests/portal/run.sh --hand
 ```
 
-Anlage im Portal anlegen, den angezeigten Token merken. Der Pi lässt sich auf zwei Arten spielen:
+startet dieselbe Wegwerf-Datenbank (UTF-8) mit `schema.sql` und die Attrappe, trägt `chef@solarmaa.ch` als Solarmaa-Konto ein und bleibt stehen, bis Strg+C gedrückt wird. Das Skript zeigt die Adresse des Portals, den `psql`-Aufruf und den Befehl für den Pi an.
+
+Im Portal eine Anlage anlegen und den angezeigten Token merken. Der Pi lässt sich auf zwei Arten spielen:
 
 ```bash
 # a) eine Meldung samt Befehlen pro Aufruf; jeder Aufruf wirkt wie ein Neustart des Dienstes
-python3 tests/portal/pi_ablauf.py http://127.0.0.1:8090 --runde /tmp/pi-hand TOKEN
+python3 tests/portal/pi_ablauf.py <Adresse des Portals> --runde /tmp/pi-hand TOKEN
 
-# b) der echte Dienst im Demo-Modus (meldet alle 30 bis 60 Sekunden; ein Neustart nach «konfig»
-#    beendet den Prozess, danach von Hand neu starten, wie es sonst systemd tut)
+# b) der echte Dienst im Demo-Modus mit der so angelegten Konfiguration (meldet alle 30 bis 60 Sekunden;
+#    nach «konfig» beendet er sich, danach von Hand neu starten, wie es sonst systemd tut)
 cd pi && python3 -m solarmaa_dash run -c /tmp/pi-hand/config.toml --db /tmp/pi-hand/demo.db --port 8080
 ```
 
-Zeit zurückstellen (Verfall prüfen): `psql -c "update public.befehle set erstellt = now() - interval '2 hours' where status = 'offen'"`.
+Zeit zurückstellen (Verfall prüfen), mit dem angezeigten `psql`-Aufruf: `update public.befehle set erstellt = now() - interval '2 hours' where status = 'offen'`.
 
-Aufräumen: Attrappe beenden, `$PGBIN/pg_ctl -D $T/db -m immediate stop`, `rm -rf $T /tmp/pi-hand`.
+Wer den Cluster selbst anlegt: `initdb` unbedingt mit `-E UTF8 --locale=C` aufrufen. Ohne das entsteht je nach Umgebung eine Datenbank in SQL_ASCII, und «Konfiguration senden» scheitert mit «unsupported Unicode escape sequence».

@@ -183,7 +183,7 @@
     n.hidden = false;
   }
   function showToken(name, tok) {
-    $("tokenText").textContent = `[portal]\nurl = "${URL_}"\nschluessel = "${KEY}"\ntoken = "${tok}"\nfernwartung = true\n`;
+    $("tokenText").textContent = `[portal]\nurl = "${URL_}"\nschluessel = "${KEY}"\ntoken = "${tok}"\n# Fernwartung durch Solarmaa (auf false setzen, wenn nicht vereinbart)\nfernwartung = true\n`;
     $("tokenBox").hidden = false; $("tokenBox").querySelector("h2").textContent = `Pi-Token für «${name}»`;
     $("tokenBox").scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -243,10 +243,12 @@
     ["fernBefehle", "fernStand", "fernMsg", "fernErr", "fernHinweis"].forEach((id) => { $(id).textContent = ""; });
     $("fernMsg").hidden = true; $("fernErr").hidden = true;
     [["fernUpdate", "Update auslösen"], ["fernKonfigSenden", "Konfiguration senden"]].forEach(([id, text]) => { $(id).dataset.sure = ""; $(id).textContent = text; });
+    // gesperrt, bis loadFern() die Anlage kennt: Sonst ginge ein Klick ohne Anlage hinaus
+    ["fernUpdate", "fernKonfigLaden", "fernKonfigSenden"].forEach((id) => { $(id).disabled = true; });
   }
   function fernStatus() {
     const p = fern.p, ok2 = aal() === "aal2";
-    if (!p) return;
+    if (!p || !fern.id) return;
     const grund = !ok2 ? "Fernwartung ist erst nach der Zwei-Faktor-Bestätigung möglich."
       : !p.fernwartung ? "Fernwartung ist auf dieser Anlage ausgeschaltet. Einschalten nur vor Ort: in der Konfiguration des Pi unter [portal] die Zeile fernwartung = true ergänzen (ab Software 1.6.0)."
       : !online(p) ? "Die Anlage ist offline. Befehle sind erst wieder möglich, wenn sich der Pi meldet." : "";
@@ -331,12 +333,14 @@
   const fernMsg = (text) => { $("fernMsg").textContent = text; $("fernMsg").hidden = !text; };
   $("fernUpdate").addEventListener("click", async () => {
     const b = $("fernUpdate");
+    if (!fern.id) return;
     if (!sure(b, "Wirklich? Der Dienst auf dem Pi startet neu.", "Update auslösen")) return;
     $("fernErr").hidden = true; fernMsg("");
     try { await rpc("befehl_anlegen", { p_anlage: fern.id, p_art: "update" }); fernMsg("Update angefordert. Der Pi holt den Befehl bei seiner nächsten Meldung ab (etwa eine Minute)."); await loadBefehle(); }
     catch (e) { showErr("fernErr", e); onErr(e); }
   });
   $("fernKonfigLaden").addEventListener("click", async () => {
+    if (!fern.id) return;
     $("fernErr").hidden = true; fernMsg("");
     try {
       const id = fern.id, rows = await get(`anlagen_konfig?select=text,stand&anlage_id=eq.${encodeURIComponent(id)}`);
@@ -350,7 +354,7 @@
   });
   $("fernKonfigSenden").addEventListener("click", async () => {
     const b = $("fernKonfigSenden");
-    if (!fern.orig) return;
+    if (!fern.orig || !fern.id) return;
     if (!sure(b, "Wirklich senden? Der Dienst auf dem Pi startet neu.", "Konfiguration senden")) return;
     $("fernErr").hidden = true; fernMsg("");
     try {
@@ -401,6 +405,8 @@
     ["plants", "members", "summary", "pNow", "pToday", "tokenText", "pName", "pMeta", "pAlarm", "pCurtail", "chDay", "chDays", "who", "memErr"].forEach((id) => { $(id).textContent = ""; });
     $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true;
     fernLeeren(); $("pFern").hidden = true;
+    $("pState").textContent = ""; $("pState").className = "pill";
+    ["email", "pw", "mEmail", "npw", "aName", "aOrt", "aKwp"].forEach((id) => { $(id).value = ""; });
     show("vLogin");
   });
   $("back").addEventListener("click", () => { current = null; show("vList"); loadList().catch(onErr); });

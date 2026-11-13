@@ -84,7 +84,7 @@ function piRunde(token) {
   await p.waitForSelector("#tokenBox:not([hidden])");
   const block = await p.textContent("#tokenText");
   const token = block.match(/token = "([0-9a-f]+)"/)[1];
-  ok("Block für den Pi enthält fernwartung = true", /\nfernwartung = true\n/.test(block));
+  ok("Block für den Pi enthält fernwartung = true mit Hinweis", /\n# Fernwartung durch Solarmaa \(auf false setzen, wenn nicht vereinbart\)\nfernwartung = true\n/.test(block));
   await pruefen("Liste mit Token");
   await p.tap("#tokenClose");
   ok("Pi meldet sich", piRunde(token).fehler === null);
@@ -147,6 +147,18 @@ function piRunde(token) {
   ok("Quittung wird angezeigt", /läuft mit neuer Konfiguration/.test(await befehl().textContent()));
   await pruefen("Befehl erledigt");
 
+  // ---------------------------------------------------------------- Anlage erneut öffnen, Antworten verzögert
+  await p.tap("#back"); await p.waitForSelector(".plant");
+  await p.route("**/rest/v1/messwerte*", async (route) => { await new Promise((res) => setTimeout(res, 1500)); await route.continue(); });
+  await p.tap(".plant"); await p.waitForSelector("#vPlant:not([hidden])");
+  ok("während die Anlage lädt, sind die Knöpfe der Fernwartung gesperrt", (await p.isDisabled("#fernUpdate")) && (await p.isDisabled("#fernKonfigLaden")));
+  await p.evaluate(() => { for (const id of ["fernKonfigLaden", "fernUpdate", "fernUpdate"]) { const b = document.getElementById(id); b.disabled = false; b.click(); b.disabled = true; } });
+  await p.waitForFunction(() => !document.querySelector("#fernUpdate").disabled, null, { timeout: 15000 });
+  await p.unroute("**/rest/v1/messwerte*");
+  await warteStand("erledigt");
+  ok("kein Befehl ohne Anlage gesendet", (await p.locator("#fernBefehle li").count()) === 1 && (await p.isHidden("#fernErr")));
+  await pruefen("Anlage mit verzögerten Antworten");
+
   // ---------------------------------------------------------------- Ablauf 5: gesperrter Abschnitt
   await p.tap("#fernKonfigLaden"); await p.waitForFunction(() => document.querySelector("#fernKonfig").value.includes("Vom Portal geändert"));
   const konfig2 = await p.inputValue("#fernKonfig");
@@ -185,13 +197,17 @@ function piRunde(token) {
 
   // ---------------------------------------------------------------- Ablauf 10: Abmelden räumt auf
   await p.tap("#fernKonfigLaden"); await p.waitForSelector("#fernKonfig:not([hidden])");
+  await p.fill("#mEmail", "rest@example.ch");
+  await p.evaluate(() => { document.getElementById("email").value = "chef@solarmaa.ch"; });     // wie nach einer Anmeldung ohne Neuladen
+  ok("vor dem Abmelden steht der Zustand der Anlage im Dokument", (await p.textContent("#pState")).length > 0);
   await abmelden();
   const rest = await p.evaluate(() => ({ text: document.querySelector("#fernKonfig").value, liste: document.querySelector("#fernBefehle").children.length,
-    secret: document.querySelector("#mfaSecret").textContent, qr: document.querySelector("#mfaQr").getAttribute("src"), html: document.documentElement.outerHTML, speicher: JSON.stringify(localStorage) }));
+    secret: document.querySelector("#mfaSecret").textContent, felder: ["email", "pw", "mEmail", "mfaCode", "mfaEnrollCode", "aName"].map((id) => document.getElementById(id).value).join(""), zustand: document.querySelector("#pState").textContent, qr: document.querySelector("#mfaQr").getAttribute("src"), html: document.documentElement.outerHTML, speicher: JSON.stringify(localStorage) }));
   ok("nach dem Abmelden: Textfeld, Befehlsliste, Schlüssel und QR-Code leer", rest.text === "" && rest.liste === 0 && rest.secret === "" && rest.qr === null);
   ok("nach dem Abmelden: nichts von der Anlage im Dokument oder Speicher", !/Vom Portal geändert|ablauf-|TESTSECRET|Browser-Anlage|chef@|api_key/.test(rest.html) && rest.speicher === "{}",
     `(gefunden: ${(rest.html.match(/.{30}(Vom Portal geändert|ablauf-|TESTSECRET|Browser-Anlage|chef@|api_key).{30}/s) || [""])[0]}; Speicher: ${rest.speicher})`);
   ok("Karte Fernwartung versteckt", await p.isHidden("#pFern"));
+  ok("nach dem Abmelden: Eingabefelder (E-Mail, Kunde) und Zustand der Anlage leer", rest.felder === "" && rest.zustand === "", JSON.stringify([rest.felder, rest.zustand]));
 
   // ---------------------------------------------------------------- Zweite Anmeldung: Code statt Einrichtung
   await anmelden("chef@solarmaa.ch"); await p.waitForSelector(".plant"); await p.tap(".plant");

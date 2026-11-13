@@ -312,7 +312,7 @@ begin
   select fernwartung into v_fern from public.anlagen where id = p_anlage;
   if not found then raise exception 'Anlage nicht gefunden' using errcode = '02000'; end if;
   if not v_fern then
-    raise exception 'Fernwartung ist auf dieser Anlage nicht eingeschaltet' using errcode = '55000';
+    raise exception 'Fernwartung ist auf dieser Anlage nicht eingeschaltet' using errcode = 'P0001';
   end if;
   select email into mail from auth.users where id = auth.uid();
   -- ein noch nicht abgeholter Befehl derselben Art wird ersetzt
