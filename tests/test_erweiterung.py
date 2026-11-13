@@ -288,13 +288,13 @@ class PortalTests(unittest.TestCase):
             store.add(snap); state.publish(snap)
             p = Portal(cfg)
             self.assertTrue(p.aktiv)
-            self.assertTrue(p.melden(state))
+            self.assertEqual(p.melden(state), {"ok": True})
             pfad, body = srv.posts[0]
             self.assertEqual(body["p_token"], "t" * 48)
             self.assertIn("pv_w", body["p_daten"]["live"])
             self.assertEqual(body["p_daten"]["heute"]["day"], store.today()["day"])
             srv.routes.clear()
-            self.assertFalse(p.melden(state))                 # Portal weg: nur Fehlertext, keine Ausnahme
+            self.assertIsNone(p.melden(state))                # Portal weg: nur Fehlertext, keine Ausnahme
             self.assertIn("HTTP 404", p.fehler)
         finally:
             srv.shutdown(); srv.server_close()

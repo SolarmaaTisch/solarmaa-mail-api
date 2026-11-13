@@ -42,7 +42,8 @@ DEFAULTS: dict = {
     # Alarme: rote Lampe (Shelly/myStrom), Push (ntfy), E-Mail – siehe docs/11-abregelung.md
     "benachrichtigung": {},
     # Solarmaa-Portal (siehe docs/13-portal.md)
-    "portal": {"url": "", "schluessel": "", "token": "", "intervall_s": 60},
+    # fernwartung: Update und Konfiguration über das Portal zulassen (Standard aus, siehe ENTSCHEIDE E7)
+    "portal": {"url": "", "schluessel": "", "token": "", "intervall_s": 60, "fernwartung": False},
     "server": {"host": "0.0.0.0", "port": 80, "app_pfad": ""},
     "daten": {"pfad": "/var/lib/solarmaa-dash/data.db", "aufbewahrung_tage": 800},
 }
