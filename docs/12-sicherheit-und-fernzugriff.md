@@ -49,6 +49,10 @@ Für Zugriff von unterwegs gibt es zwei saubere Wege:
 3. **ntfy-Thema.** Auf dem öffentlichen Server ntfy.sh kann jeder mitlesen, der den Themennamen kennt. Langen, zufälligen Namen wählen oder einen eigenen ntfy-Server mit Zugangsschutz betreiben.
 4. **Was der Wechselrichter tut, wenn der Pi ganz ausfällt** (Strom weg während Abregelung), bestimmt der PIKO CI selbst. Mit Kostal klären, ob die Vorgabe dann bestehen bleibt, und das Lebenszeichen (healthchecks.io) einrichten, damit ein Pi-Ausfall auffällt.
 
+## Anlagedoku im Portal
+
+Dokumente pro Anlage liegen in einem privaten Supabase-Storage-Bucket (Entscheid E8). Hochladen, Ändern, Löschen und interne Dokumente nur für Solarmaa-Konten mit Zwei-Faktor; Kunden sehen nur, was als «auch für Kunde» freigegeben ist. Die Seite nimmt nur PDF, JPEG, PNG und WebP an (Inhalt geprüft), zeigt Bilder nur als Bild und lädt PDFs nur herunter; nichts davon wird als Seite im Browser geöffnet. Keine Passwörter in Dokumenten ablegen; Fotos können den Aufnahmeort enthalten. Restrisiken (signierte Links, Zwischenspeicher) und was am echten Projekt ungeprüft ist: [`13-portal.md`](13-portal.md#anlagedoku).
+
 ## Verwaltung im Browser
 
 Konfiguration und Benutzer lassen sich als `admin` im Browser bearbeiten. Dafür darf der Dienst die Datei `/etc/solarmaa-dash/config.toml` schreiben (nur diese eine Datei). Geheime Werte werden maskiert übertragen. Weil die Verbindung im Heimnetz unverschlüsselt ist, gilt weiterhin: neue Passwörter und Tokens möglichst über eine verschlüsselte Verbindung (Tailscale) eintragen.

@@ -14,6 +14,7 @@ flowchart LR
 - **Pi-Token:** Jede Anlage hat einen geheimen Token. Gespeichert ist nur sein Hash. Geht ein Pi verloren, im Portal «Neuen Pi-Token erzeugen».
 
 - **Fernwartung (Stufe 3):** Solarmaa-Konten mit Zwei-Faktor-Anmeldung können pro Anlage ein Update auslösen und die Konfiguration ändern, sofern die Fernwartung auf dem Pi eingeschaltet ist. Siehe Kapitel «Fernwartung» unten.
+- **Anlagedoku:** Pro Anlage Dokumente (PDF, Bilder) mit Sichtbarkeit pro Dokument. Siehe Kapitel «Anlagedoku» unten. **Noch nicht ausgeliefert** (Datenbank und Seite nicht eingespielt).
 
 Noch nicht gebaut: Hausansicht und Rechnungen im Portal, Alarm an Solarmaa bei ausbleibendem Pi (Stufe 2).
 
@@ -137,6 +138,68 @@ Startet der Dienst mit einer aus der Ferne gespeicherten Konfiguration nicht, sp
 4. **Sofort danach** richten alle Solarmaa-Konten ihren zweiten Faktor ein (das geht erst mit der neuen Seite).
 5. Erst dann pro Anlage `fernwartung = true` eintragen (vor Ort oder per VPN), wenn der Kunde der Fernwartung zugestimmt hat. Achtung: Der Block, den das Portal beim Anlegen zeigt, und `pi/portal-verbinden.sh` enthalten die Zeile bereits.
 
+## Anlagedoku
+
+Grundlage ist der Entscheid E8 in [`ENTSCHEIDE.md`](ENTSCHEIDE.md). Pro Anlage lassen sich Dokumente ablegen: Schema, Datenblatt, Foto, Protokoll, Sonstiges. Erlaubt sind PDF, JPEG, PNG und WebP bis 20 MB. Eine gemeinsame Bibliothek für mehrere Anlagen gibt es nicht.
+
+### Wer darf was
+
+| | Solarmaa mit Zwei-Faktor | Solarmaa ohne Zwei-Faktor | Kunde der Anlage | anderes Konto, nicht angemeldet |
+|---|---|---|---|---|
+| Dokumente «nur Solarmaa» sehen | ja | nein | nein | nein |
+| Dokumente «auch für Kunde» sehen und herunterladen | ja | nein | ja | nein |
+| hochladen, umbenennen, Sichtbarkeit ändern, löschen | ja | nein | nein | nein |
+
+- Beim Hochladen ist «nur Solarmaa» vorgewählt. Ein Kunde sieht ein Dokument erst, wenn es fertig hochgeladen und auf «auch für Kunde» gestellt ist; ohne freigegebenes Dokument sieht er die Karte gar nicht.
+- Das prüfen die Datenbank (Tabelle `dokumente`, Funktionen `dokument_…`) und die Regeln auf dem Storage-Bucket `anlagedoku`, nicht die Webseite. Der Bucket ist privat: Es gibt keine öffentlichen Adressen, jede Datei wird mit der Anmeldung abgerufen.
+- Die Webseite prüft beim Hochladen den Inhalt der Datei (die ersten Bytes), nicht nur die Endung. SVG, HTML und andere Typen werden abgewiesen, ebenso vom Bucket (erlaubte Typen) und von der Datenbank.
+- Bilder werden in der Seite angezeigt, PDFs nur heruntergeladen (keine Vorschau im Browser). Der Dateiname beim Herunterladen ist bereinigt.
+- **Keine Passwörter oder Zugangsdaten** in Dokumenten ablegen. Fotos können den Aufnahmeort (GPS) enthalten; das Portal entfernt ihn nicht. Wer das nicht will, entfernt die Angaben vor dem Hochladen.
+- Eine Anlage mit Dokumenten lässt sich nicht löschen: zuerst alle Dokumente löschen.
+
+### Ablauf und Zustände
+
+1. **Hochladen:** Das Portal reserviert einen Speicherort (`dokument_anlegen`, Zustand «unvollständig»), lädt die Datei genau dorthin (`<anlage>/<dokument>.<endung>`, der Dateiname des Nutzers kommt nie in den Pfad) und meldet sie fertig (`dokument_fertig`). Die Datenbank prüft dabei Typ und Grösse der gespeicherten Datei. Eine Reservierung gilt eine Stunde.
+2. **Unvollständig:** Ist das Hochladen abgebrochen (Verbindung weg, Datei abgewiesen), bleibt der Eintrag für Solarmaa als «unvollständig» stehen, mit «Fertigstellen» und «Löschen». Kunden sehen ihn nie.
+3. **Löschen** (zweimal tippen): Zuerst wird das Dokument in der Datenbank zum Löschen markiert (für den Kunden sofort weg), dann die Datei im Bucket gelöscht, dann der Eintrag. Liegt die Datei noch im Bucket, lehnt die Datenbank das Entfernen des Eintrags ab («Datei noch vorhanden, erneut versuchen»); der Eintrag steht dann als «wird gelöscht» in der Liste und lässt sich erneut löschen.
+4. Eine fertige Datei lässt sich nicht überschreiben. Für eine neue Fassung ein neues Dokument hochladen und das alte löschen.
+
+### Restrisiken
+
+- **Signierte Links:** Supabase Storage kann zeitlich begrenzte Links erzeugen (`/object/sign`). Das Portal nutzt sie nicht. Ob ein Konto, das eine Datei lesen darf, selbst einen solchen Link erzeugen kann, ist am echten Projekt nicht geprüft. Ein so erzeugter Link bliebe bis zu seinem Ablauf gültig, auch wenn das Dokument danach auf «nur Solarmaa» gestellt oder der Zugriff des Kunden entfernt wird. Darum: Was ein Kunde einmal sehen konnte, gilt als ihm bekannt.
+- **Zwischenspeicher:** Ob Supabase eine Datei nach dem Wechsel auf «nur Solarmaa» noch kurz aus einem Zwischenspeicher (CDN) ausliefert, ist nicht geprüft. Das Portal lädt Dateien immer mit `cache: no-store` und speichert sie mit `Cache-Control: no-store`.
+- Wer eine heruntergeladene Datei hat, behält sie. Die Sichtbarkeit wirkt nur auf künftige Abrufe.
+
+### Auslieferung der Anlagedoku (Reihenfolge einhalten)
+
+1. `portal/supabase/schema.sql` im Supabase-Projekt einspielen (SQL Editor). Das legt die Tabelle `dokumente`, die Funktionen, den Bucket `anlagedoku` und dessen Regeln an. Die bisherige Portal-Seite läuft damit unverändert weiter (geprüft mit `tests/portal/run.sh`, Abschnitt «Eingespielte Datenbank (Stufe 3) hochziehen»).
+2. Im Supabase-Dashboard kontrollieren:
+   - **Storage → Buckets:** `anlagedoku` vorhanden, **nicht** «Public», Grenze 20 MB, erlaubte Typen `application/pdf`, `image/jpeg`, `image/png`, `image/webp`.
+   - **Storage → Policies** (bzw. Database → Policies, Tabelle `storage.objects`): genau `anlagedoku_lesen` (SELECT), `anlagedoku_hochladen` (INSERT), `anlagedoku_loeschen` (DELETE), alle für `authenticated`; keine UPDATE-Regel, keine weiteren Regeln für diesen Bucket.
+   - Meldet der SQL Editor beim Einspielen einen Rechtefehler bei `storage.buckets` oder `create policy … on storage.objects`, **abbrechen** und melden; nicht über das Dashboard «nachbauen».
+3. Dann die Portal-Seite von `stabil` veröffentlichen. Ohne neue Datenbank zeigt die neue Seite «Dokumente nicht verfügbar», der Rest läuft weiter.
+4. Ein Testdokument hochladen («nur Solarmaa»), mit einem Kundenkonto prüfen, dass es nicht sichtbar ist, dann freigeben und erneut prüfen. Danach löschen.
+
+**Grenzen des Plans:** Speicherplatz, Datenverkehr und maximale Dateigrösse des Supabase-Plans im Dashboard (Settings → Usage bzw. Billing) prüfen. Hier sind sie nicht angenommen; die Grenze von 20 MB pro Datei setzt der Bucket, falls der Plan sie zulässt.
+
+### Datenschutz
+
+Dokumente können Personendaten enthalten (Namen, Adressen, Fotos von Gebäuden mit Aufnahmeort). Sie liegen bei Supabase (Region des Projekts). Vor dem Einsatz mit echten Kunden: Auftragsverarbeitungsvertrag mit Supabase abschliessen (siehe «Vor dem Start mit echten Kunden»), Datenschutzerklärung um die Anlagedoku ergänzen und mit dem Kunden klären, welche Dokumente freigegeben werden. Beim Löschen einer Anlage (erst nach dem Löschen aller Dokumente möglich) bleibt nichts im Bucket zurück; ob Supabase gelöschte Dateien noch in Sicherungen hält, ist eine Frage an den Anbieter.
+
+### Geprüft und nicht geprüft (Anlagedoku)
+
+Geprüft, nur lokal:
+
+- Datenbankregeln in einer lokalen Postgres-Datenbank mit nachgebildetem Storage-Schema (`tests/portal/stub.sql`): neue Datenbank, wiederholt eingespielt (auch nach Verstellen des Buckets), hochgezogen von Stufe 1 und vom eingespielten Stand der Stufe 3 (`tests/portal/test_dokumente.sql`).
+- Portal-Seite im Handy-Format gegen die Attrappe (`tests/portal/run.sh --browser`): Hochladen, Vorschau, Herunterladen, Umbenennen, Sichtbarkeit, Löschen, Ablehnungen, Kunde und fremdes Konto, verspätete Antworten, Abmelden während Laden und Hochladen.
+
+**Nicht geprüft** (nur am echten Projekt möglich):
+
+- Das SQL im echten Projekt: Einfügen in `storage.buckets`, `create policy` auf `storage.objects` als Rolle `postgres`, Lesen von `storage.objects` in den Funktionen `dokument_fertig` und `dokument_loeschen`.
+- Die Storage-Schnittstelle von Supabase im Detail: Pfade (`/storage/v1/object/anlagedoku/…`, `…/object/authenticated/…`, Löschen mit `prefixes`), `x-upsert`, Statuscodes und Form der Fehler, Antwort beim Löschen, Feldnamen `size` und `mimetype` in `metadata`, ob Grenze und erlaubte Typen des Buckets durchgesetzt werden, ob Storage beim Hochladen und Löschen die Regeln wie nachgebildet anwendet.
+- Zwischenspeicher (CDN) nach einem Wechsel der Sichtbarkeit; ob Kunden selbst signierte Links erzeugen können.
+- Die Inhalts-Sicherheitsrichtlinie (`img-src … blob:`) auf Vercel; Herunterladen auf iOS und Android.
+
 ## Vor dem Start mit echten Kunden
 
 - Supabase: bezahlten Plan prüfen (Sicherungen, kein Stilllegen bei Inaktivität), Region bestätigen.
@@ -144,6 +207,7 @@ Startet der Dienst mit einer aus der Ferne gespeicherten Konfiguration nicht, sp
 - Eigenen E-Mail-Versand (SMTP) in Supabase hinterlegen: Der eingebaute Versand ist stark begrenzt und nur zum Testen gedacht.
 - Zwei-Faktor-Anmeldung für **alle** Solarmaa-Konten einrichten, bevor Stufe 3 eingespielt wird (siehe «Auslieferung der Stufe 3»).
 - Auftragsverarbeitung: Bei eingeschalteter Fernwartung liegt die maskierte Konfiguration der Anlage in Supabase (IP-Adressen im Hausnetz, Benutzernamen, E-Mail-Adressen, Namen der Einheiten; keine Passwörter).
+- Anlagedoku: Dokumente und Fotos liegen in Supabase Storage (siehe «Anlagedoku → Datenschutz»).
 
 ## Geprüft und nicht geprüft
 

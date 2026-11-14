@@ -23,12 +23,13 @@ Jeder Lauf legt einen frischen Wegwerf-Cluster unter `/tmp/smpg.XXXXXX` an (nur 
 
 | Schritt | Dateien | Inhalt |
 |---|---|---|
-| Neue Datenbank | `stub.sql`, `schema.sql` (zweimal), `hilfen.sql`, `test_stufe1.sql`, `test_stufe3.sql` | Zugriffsregeln der Stufen 1 und 3; `schema.sql` ist wiederholt ausführbar |
-| Bestehende Datenbank | `schema_stufe1.sql`, `upgrade_vor.sql`, `schema.sql`, `upgrade_nach.sql`, `test_stufe3.sql` | Einspielen über den Stand der Stufe 1: Bestand bleibt, Fernwartung ist aus, alter Pi meldet weiter |
+| Neue Datenbank | `stub.sql`, `schema.sql` (zweimal), `hilfen.sql`, `test_stufe1.sql`, `test_stufe3.sql`, `test_dokumente.sql`, `dokumente_nach.sql` | Zugriffsregeln der Stufen 1 und 3 und der Anlagedoku; `schema.sql` ist wiederholt ausführbar und setzt einen verstellten Bucket zurück |
+| Bestehende Datenbank | `schema_stufe1.sql`, `upgrade_vor.sql`, `schema.sql`, `upgrade_nach.sql`, `test_stufe3.sql`, `test_dokumente.sql` | Einspielen über den Stand der Stufe 1: Bestand bleibt, Fernwartung ist aus, alter Pi meldet weiter |
+| Eingespielte Datenbank | `schema_stufe3.sql`, `upgrade_vor.sql`, `schema.sql` (zweimal), `upgrade_nach.sql`, `dokumente_nach.sql`, `test_stufe3.sql`, `test_dokumente.sql` | Einspielen über den Stand, der im Supabase-Projekt liegt (Stufe 3): Bestand bleibt, Anlagedoku kommt dazu |
 | Pi gegen die Attrappe | `fake_supabase.py`, `pi_ablauf.py` | echter Pi-Code: Befehle abholen, ausführen, quittieren, Konfiguration maskiert hochladen; neuer Pi an alter Datenbank |
-| Browser (`--browser`) | `browser.js` | Zwei-Faktor einrichten und bestätigen, Konfiguration laden und senden, Update, Ablehnungen, Kunde und fremdes Konto, Abmelden; dazu Überlaufen, Bedienelemente unter 44 px, Skriptfehler, CSP-Verstösse, unerwartete Fehlantworten |
+| Browser (`--browser`) | `browser.js` | Zwei-Faktor einrichten und bestätigen, Konfiguration laden und senden, Update, Anlagedoku (hochladen, Vorschau, herunterladen, Sichtbarkeit, löschen, Ablehnungen), Kunde und fremdes Konto, verspätete Antworten, Abmelden; dazu Überlaufen, Bedienelemente unter 44 px, Skriptfehler, CSP-Verstösse, unerwartete Fehlantworten |
 
-`schema_stufe1.sql` ist der eingefrorene Stand vor Stufe 3 und wird nicht geändert. Die SQL-Tests melden jede bestandene Prüfung als `ok - …`; die Hilfen dazu (`t.als`, `t.gleich`, `t.scheitert`) stehen in `hilfen.sql`.
+`schema_stufe1.sql` ist der eingefrorene Stand vor Stufe 3, `schema_stufe3.sql` der im Supabase-Projekt eingespielte Stand (Commit 5ad3238); beide werden nicht geändert. Die SQL-Tests melden jede bestandene Prüfung als `ok - …`; die Hilfen dazu (`t.als`, `t.gleich`, `t.scheitert`) stehen in `hilfen.sql`.
 
 ## Was die Attrappe nachbildet und was nicht
 
@@ -38,9 +39,10 @@ Jeder Lauf legt einen frischen Wegwerf-Cluster unter `/tmp/smpg.XXXXXX` an (nur 
 - Anmeldung: kein echter Supabase-Login. Die Tokens haben die Form eines JWT (`kopf.nutzlast.x`), sind aber nicht signiert.
 - Zwei-Faktor in der Form der Supabase-Auth-API: `GET /auth/v1/user` (Feld `factors`), `POST /auth/v1/factors`, `POST /auth/v1/factors/{id}/challenge`, `POST /auth/v1/factors/{id}/verify`, `DELETE /auth/v1/factors/{id}`. Keine echten TOTP-Codes: Der Code ist immer `424242`. Eingerichtete Faktoren liegen nur im Speicher der Attrappe.
 - Mini-PostgREST: `select`, Filter `eq`/`gte`, `order`, `limit` und Funktionsaufrufe. Die Zuordnung von Datenbankfehlern zu HTTP-Status folgt der PostgREST-Dokumentation, ist aber kein PostgREST.
+- Storage: `stub.sql` legt das Schema `storage` an (`buckets`, `objects` mit den genutzten Spalten wie am Projekt nachgesehen, RLS an, `foldername`/`filename`/`extension`, alle Rechte für die drei Rollen wie bei Supabase). Die Attrappe beantwortet `POST /storage/v1/object/<bucket>/<pfad>` (Rohdaten; Grenze und Typen des Buckets; Eintrag in `storage.objects` mit der Rolle des Kontos, `metadata` mit `size` und `mimetype`), `GET /storage/v1/object/authenticated/<bucket>/<pfad>` und `…/object/<bucket>/<pfad>` (Lesen mit der Rolle des Kontos), `DELETE /storage/v1/object/<bucket>` mit `{"prefixes": […]}` (Liste der gelöschten, auch leer) und weist `…/object/public/…` ab. Fehler als HTTP 400 mit `statusCode` im Text. Die Dateien liegen im Temp-Ordner des Laufs. Pfade, Statuscodes und Antwortformen folgen der Supabase-Dokumentation und sind am echten Projekt **ungeprüft**.
 - Die Seite wird mit den Kopfzeilen aus `portal/web/vercel.json` ausgeliefert (CSP), nur `connect-src` ist um die eigene Adresse ergänzt. Vercel selbst ist nicht nachgebildet.
 
-Nicht geprüft werden kann hier: das echte Supabase-Projekt, echte TOTP-Codes, Vercel, ein echter Pi mit systemd und `update.sh`.
+Nicht geprüft werden kann hier: das echte Supabase-Projekt samt Storage, echte TOTP-Codes, Vercel, ein echter Pi mit systemd und `update.sh`.
 
 ## Testkonten (nur in der Attrappe)
 
