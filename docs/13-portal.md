@@ -17,12 +17,12 @@ flowchart LR
 
 Noch nicht gebaut: Hausansicht und Rechnungen im Portal, Alarm an Solarmaa bei ausbleibendem Pi (Stufe 2).
 
-> **Stand der Stufe 3:** entwickelt und gegen lokale Datenbank und Attrappe geprüft, aber **noch nicht ausgeliefert**. Weder das Supabase-Projekt noch das veröffentlichte Portal noch ein Pi im Feld haben diesen Stand, bis er freigegeben und in der Reihenfolge unter «Auslieferung der Stufe 3» eingespielt ist.
+> **Stand der Stufe 3 (14.11.2026):** ausgeliefert. Datenbankstruktur im Supabase-Projekt eingespielt, Portal-Seite veröffentlicht, Pi-Stand 1.6.0 auf dem Branch `stabil`. Pis im Feld erhalten 1.6.0 erst mit dem nächsten Update von `stabil`.
 
-## Stand (13.11.2026)
+## Stand (14.11.2026)
 
-- Portal: **https://solarmaa-portal.vercel.app** (Vercel-Projekt `solarmaa-portal`, Team tisch1, verbunden mit diesem Repository, Ordner `portal/web`; jeder Push auf den Hauptbranch veröffentlicht neu).
-- Supabase-Projekt SolarmaaPortal: Struktur eingespielt, offene Registrierung aus, Passwort-Mindestlänge 10, Portal-Adresse als Site URL gesetzt, ein Solarmaa-Admin eingetragen.
+- Portal: **https://solarmaa-portal.vercel.app** (Vercel-Projekt `solarmaa-portal`, Team tisch1, verbunden mit diesem Repository, Ordner `portal/web`). Veröffentlicht wird nur der Branch `stabil`: Ein «Ignored Build Step» in den Vercel-Einstellungen überspringt Produktiv-Builds aus allen anderen Branches; sie ergeben nur Vorschauen (geschützt durch die Vercel-Anmeldung). Ein Stand von `stabil` wird im Vercel-Dashboard (Deployments → Promote to Production) veröffentlicht, solange im Projekt nicht `stabil` als Produktions-Branch eingetragen ist.
+- Supabase-Projekt SolarmaaPortal: Struktur der Stufe 3 eingespielt (14.11.2026), TOTP-Zwei-Faktor eingeschaltet, offene Registrierung aus, Passwort-Mindestlänge 10, Portal-Adresse als Site URL gesetzt, ein Solarmaa-Admin eingetragen.
 - Die Schritte 1 bis 4 unten sind damit erledigt und dienen als Nachschlagewerk.
 
 ## Einrichtung (einmalig)
@@ -156,7 +156,7 @@ Geprüft (alles lokal, siehe [`tests/portal/README.md`](../tests/portal/README.m
 
 Nicht geprüft (nur an der echten Umgebung möglich):
 
-- Das echte Supabase-Projekt: Login, Einladungs- und Passwort-Links, `auth.jwt()` und die Standardrechte.
+- Das echte Supabase-Projekt: Login, Einladungs- und Passwort-Links. Geprüft am 14.11.2026 nur: Struktur fehlerfrei eingespielt, RLS auf allen Tabellen, Ausführrechte wie vorgesehen, Anlagenabfrage des Portals als Solarmaa-Konto liefert die Anlage samt Spalte `fernwartung`, `hat_2fa()` ohne zweiten Faktor falsch.
 - Die **Zwei-Faktor-Schnittstelle von Supabase** (`/auth/v1/factors`, `…/challenge`, `…/verify`, Faktorenliste in `/auth/v1/user`, Feldnamen `totp.qr_code`, `totp.secret`, `challenge_id`): nach der Dokumentation der Auth-API gebaut, gegen eine Attrappe geprüft. Ebenso, ob TOTP im Projekt eingeschaltet ist und ob die Stufe `aal2` eine Token-Erneuerung übersteht.
 - PostgREST im Detail (Antwort auf Funktionen ohne Rückgabewert, HTTP-Status bei abgelehnten Aufrufen) und die Inhalts-Sicherheitsrichtlinie auf Vercel mit dem QR-Bild.
 - Fernwartung an einem echten Pi: Update über die systemd-Path-Unit, Dauer, Lesbarkeit des Update-Protokolls, Neustart und Rückfall unter systemd, Übergang 1.5.0 → 1.6.0, Zusammenspiel mit einer echten Abregelung.
