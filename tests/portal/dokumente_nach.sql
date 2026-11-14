@@ -3,5 +3,6 @@ select t.gleich('Tabelle dokumente mit RLS', (select relrowsecurity from pg_clas
 select t.gleich('Bucket privat, 20 MB, vier Typen',
                 (select public::text || '/' || file_size_limit || '/' || array_to_string(allowed_mime_types, ',') from storage.buckets where id = 'anlagedoku'),
                 'false/20971520/application/pdf,image/jpeg,image/png,image/webp'::text);
-select t.gleich('drei Regeln auf storage.objects',
-                (select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'anlagedoku%'), 3::bigint);
+select t.gleich('Regeln auf storage.objects: drei erlaubende, vier einschränkende',
+                (select count(*) filter (where permissive = 'PERMISSIVE') || '/' || count(*) filter (where permissive = 'RESTRICTIVE')
+                   from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'anlagedoku%'), '3/4'::text);

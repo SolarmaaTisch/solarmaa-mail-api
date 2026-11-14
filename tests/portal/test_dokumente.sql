@@ -21,10 +21,14 @@ select t.gleich('Bucket anlagedoku ist privat', (select public from storage.buck
 select t.gleich('Bucket: Grenze 20 MB', (select file_size_limit from storage.buckets where id = 'anlagedoku'), 20971520::bigint);
 select t.gleich('Bucket: nur PDF, JPEG, PNG, WebP', (select allowed_mime_types from storage.buckets where id = 'anlagedoku'),
                 array['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
-select t.gleich('Regeln auf storage.objects: lesen, hochladen, löschen, kein Ändern',
+select t.gleich('erlaubende Regeln auf storage.objects: lesen, hochladen, löschen, kein Ändern',
                 (select string_agg(cmd || ':' || array_to_string(roles, ','), ' ' order by cmd) from pg_policies
-                  where schemaname = 'storage' and tablename = 'objects' and policyname like 'anlagedoku%'),
+                  where schemaname = 'storage' and tablename = 'objects' and policyname like 'anlagedoku%' and permissive = 'PERMISSIVE'),
                 'DELETE:authenticated INSERT:authenticated SELECT:authenticated'::text);
+select t.gleich('einschränkende Regeln für alle Rollen: lesen, hochladen, ändern, löschen',
+                (select string_agg(cmd || ':' || array_to_string(roles, ','), ' ' order by cmd) from pg_policies
+                  where schemaname = 'storage' and tablename = 'objects' and policyname like 'anlagedoku%' and permissive = 'RESTRICTIVE'),
+                'DELETE:public INSERT:public SELECT:public UPDATE:public'::text);
 
 -- ---------------------------------------------------------------- Anlagen, Kunde
 select t.als(:'chef', 'aal2');
@@ -182,6 +186,48 @@ select t.als(:'kunde');
 select t.gleich('Zugriff entzogen: Kunde sieht nichts mehr', (select count(*) from public.dokumente) + (select count(*) from storage.objects), 0::bigint);
 select t.als(:'chef', 'aal2');
 select public.mitglied_setzen(:'a_id'::uuid, 'kunde@example.ch');
+
+-- ---------------------------------------------------------------- Zu weit gefasste fremde Regel
+-- Jemand legt später eine Regel «alles erlauben» auf storage.objects an: anlagedoku bleibt geschützt.
+reset role;
+drop policy if exists test_alles_erlaubt on storage.objects;
+create policy test_alles_erlaubt on storage.objects for all to public using (true) with check (true);
+create or replace function t.datei_aendern(p_name text) returns bigint language plpgsql as $$
+declare n bigint;
+begin
+  with x as (update storage.objects set metadata = '{"size":1,"mimetype":"image/png"}' where bucket_id = 'anlagedoku' and name = p_name returning 1)
+  select count(*) into n from x;
+  return n;
+end;
+$$;
+grant execute on function t.datei_aendern(text) to anon, authenticated;
+select t.als(:'kunde');
+select t.gleich('alles erlaubt: Kunde liest kein internes Dokument', (select count(*) from storage.objects where name = :'d1_pfad'), 0::bigint);
+select t.gleich('… sieht nur das Freigegebene', (select string_agg(name, ',') from storage.objects), :'d3_pfad');
+select t.scheitert('… lädt nichts hoch', format(:'hoch', 'anlagedoku', :'a_id' || '/00000000-0000-0000-0000-0000000000c1.pdf', :'kunde', 1, 'application/pdf'), '42501');
+select t.gleich('… ändert nichts', t.datei_aendern(:'d3_pfad'), 0::bigint);
+select t.gleich('… löscht nichts', t.datei_loeschen(:'d1_pfad') + t.datei_loeschen(:'d3_pfad'), 0::bigint);
+select t.als(:'fremd', 'aal2');
+select t.gleich('alles erlaubt: fremdes Konto liest nichts', (select count(*) from storage.objects where bucket_id = 'anlagedoku'), 0::bigint);
+select t.scheitert('… lädt nichts hoch', format(:'hoch', 'anlagedoku', :'b_id' || '/00000000-0000-0000-0000-0000000000c2.pdf', :'fremd', 1, 'application/pdf'), '42501');
+select t.gleich('… löscht nichts', t.datei_loeschen(:'d1_pfad'), 0::bigint);
+select t.als('');
+select t.gleich('alles erlaubt: nicht angemeldet liest nichts', (select count(*) from storage.objects where bucket_id = 'anlagedoku'), 0::bigint);
+select t.scheitert('… lädt nichts hoch', format(:'hoch', 'anlagedoku', :'a_id' || '/00000000-0000-0000-0000-0000000000c3.pdf', null, 1, 'application/pdf'), '42501');
+select t.gleich('… ändert und löscht nichts', t.datei_aendern(:'d3_pfad') + t.datei_loeschen(:'d3_pfad'), 0::bigint);
+select t.als(:'chef', 'aal1');
+select t.gleich('alles erlaubt: Solarmaa ohne Zwei-Faktor liest nichts', (select count(*) from storage.objects where bucket_id = 'anlagedoku'), 0::bigint);
+select t.als(:'chef', 'aal2');
+select t.gleich('alles erlaubt: auch Solarmaa mit Zwei-Faktor ändert keine Datei', t.datei_aendern(:'d1_pfad'), 0::bigint);
+select t.gleich('… und löscht keine fertige Datei ohne Beginn', t.datei_loeschen(:'d1_pfad'), 0::bigint);
+reset role;
+insert into storage.objects (bucket_id, name, metadata) values ('anderer', 'frei/x.txt', '{}');
+select t.als(:'kunde');
+select t.gleich('andere Buckets: die einschränkenden Regeln greifen dort nicht', (select count(*) from storage.objects where bucket_id = 'anderer'), 1::bigint);
+reset role;
+delete from storage.objects where bucket_id = 'anderer';
+drop policy test_alles_erlaubt on storage.objects;
+select t.als(:'chef', 'aal2');
 
 -- ---------------------------------------------------------------- Löschen
 select t.scheitert('Löschen ohne Beginn abgelehnt (fertig)', format('select public.dokument_loeschen(%L)', :'d3_id'), 'P0001');

@@ -29,7 +29,11 @@
 --   * Zustände: hochladen -> fertig -> loeschen. Hochladen geht nur auf einen vorher mit
 --     dokument_anlegen() reservierten Pfad (höchstens eine Stunde alt); fertig wird ein Dokument erst,
 --     wenn die Datei im Bucket liegt und Typ und Grösse stimmen. Gelöscht wird die Zeile erst, wenn die
---     Datei weg ist. Eine fertige Datei lässt sich nicht überschreiben (keine update-Regel).
+--     Datei weg ist. Über die normale Schnittstelle lässt sich eine fertige Datei nicht überschreiben
+--     (keine update-Regel, dazu eine einschränkende Regel «update nie»). Restrisiko: Signierte Upload-Links
+--     von Supabase (/object/upload/sign) werden nur beim Erzeugen geprüft (siehe docs/13-portal.md).
+--   * Neben den erlaubenden Regeln (to authenticated) stehen einschränkende Regeln (as restrictive, für
+--     alle Rollen): Auch eine künftige, zu weit gefasste Regel auf storage.objects öffnet den Bucket nicht.
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -562,8 +566,12 @@ grant execute on function public.hat_2fa(), public.befehl_anlegen(uuid, text, js
 grant execute on function public.ist_admin(), public.darf_anlage(uuid), public.anlage_anlegen(text, text, numeric),
   public.anlage_token_neu(uuid), public.anlage_loeschen(uuid), public.mitglied_setzen(uuid, text, boolean)
   to authenticated;
--- Anlagedoku: Die Funktionen prüfen Admin + Zwei-Faktor selbst. darf_dokument() brauchen die Regeln auf storage.objects.
-grant execute on function public.darf_dokument(text, text), public.dokument_anlegen(uuid, text, text, text, text, bigint, boolean),
+-- Anlagedoku: Die Funktionen prüfen Admin + Zwei-Faktor selbst. darf_dokument() steht in den Regeln auf
+-- storage.objects; Regelausdrücke laufen mit den Rechten des Aufrufers, darum braucht jede Rolle, für die eine
+-- Regel gilt, das Ausführrecht (auch anon wegen der einschränkenden Regeln). Es liefert nur wahr/falsch für
+-- das eigene Konto (für anon immer falsch).
+grant execute on function public.darf_dokument(text, text) to anon, authenticated;
+grant execute on function public.dokument_anlegen(uuid, text, text, text, text, bigint, boolean),
   public.dokument_fertig(uuid), public.dokument_aendern(uuid, text, text, boolean), public.dokument_loeschen_beginnen(uuid),
   public.dokument_loeschen(uuid) to authenticated;
 
@@ -576,8 +584,9 @@ values ('anlagedoku', 'anlagedoku', false, 20971520, array['application/pdf', 'i
 on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
 
--- Nur angemeldete Konten, nur dieser Bucket. Keine update-Regel: Eine Datei wird nie überschrieben.
--- Keine Regel für anon.
+-- Erlaubende Regeln: nur angemeldete Konten, nur dieser Bucket. Keine update-Regel (eine fertige Datei
+-- lässt sich über die normale Schnittstelle nicht überschreiben; Restrisiko signierte Upload-Links, siehe
+-- docs/13-portal.md). Keine erlaubende Regel für anon.
 drop policy if exists anlagedoku_lesen on storage.objects;
 create policy anlagedoku_lesen on storage.objects for select to authenticated
   using (bucket_id = 'anlagedoku' and public.darf_dokument(name, 'lesen'));
@@ -587,3 +596,18 @@ create policy anlagedoku_hochladen on storage.objects for insert to authenticate
 drop policy if exists anlagedoku_loeschen on storage.objects;
 create policy anlagedoku_loeschen on storage.objects for delete to authenticated
   using (bucket_id = 'anlagedoku' and public.darf_dokument(name, 'loeschen'));
+-- Einschränkende Regeln (werden mit UND verknüpft, gelten für alle Rollen): Für Dateien in «anlagedoku»
+-- gilt immer zusätzlich darf_dokument(), auch wenn später jemand eine weiter gefasste erlaubende Regel auf
+-- storage.objects anlegt. Ändern ist nie erlaubt. Andere Buckets sind davon nicht betroffen.
+drop policy if exists anlagedoku_schranke_lesen on storage.objects;
+create policy anlagedoku_schranke_lesen on storage.objects as restrictive for select to public
+  using (bucket_id is distinct from 'anlagedoku' or public.darf_dokument(name, 'lesen'));
+drop policy if exists anlagedoku_schranke_hochladen on storage.objects;
+create policy anlagedoku_schranke_hochladen on storage.objects as restrictive for insert to public
+  with check (bucket_id is distinct from 'anlagedoku' or public.darf_dokument(name, 'hochladen'));
+drop policy if exists anlagedoku_schranke_aendern on storage.objects;
+create policy anlagedoku_schranke_aendern on storage.objects as restrictive for update to public
+  using (bucket_id is distinct from 'anlagedoku') with check (bucket_id is distinct from 'anlagedoku');
+drop policy if exists anlagedoku_schranke_loeschen on storage.objects;
+create policy anlagedoku_schranke_loeschen on storage.objects as restrictive for delete to public
+  using (bucket_id is distinct from 'anlagedoku' or public.darf_dokument(name, 'loeschen'));
