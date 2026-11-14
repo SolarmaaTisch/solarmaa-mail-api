@@ -51,7 +51,7 @@ Für Zugriff von unterwegs gibt es zwei saubere Wege:
 
 ## Anlagedoku im Portal
 
-Dokumente pro Anlage liegen in einem privaten Supabase-Storage-Bucket (Entscheid E8). Hochladen, Ändern, Löschen und interne Dokumente nur für Solarmaa-Konten mit Zwei-Faktor; Kunden sehen nur, was als «auch für Kunde» freigegeben ist. Die Seite nimmt nur PDF, JPEG, PNG und WebP an (Inhalt geprüft), zeigt Bilder nur als Bild und lädt PDFs nur herunter; nichts davon wird als Seite im Browser geöffnet. Keine Passwörter in Dokumenten ablegen; Fotos können den Aufnahmeort enthalten. Restrisiken (signierte Links, Zwischenspeicher) und was am echten Projekt ungeprüft ist: [`13-portal.md`](13-portal.md#anlagedoku).
+Dokumente pro Anlage liegen in einem privaten Supabase-Storage-Bucket (Entscheid E8). Hochladen, Ändern, Löschen und interne Dokumente nur für Solarmaa-Konten mit Zwei-Faktor; Kunden sehen nur, was als «auch für Kunde» freigegeben ist. Die Seite nimmt nur PDF, JPEG, PNG und WebP an (Inhalt prüft die Seite, die Typangabe zusätzlich Datenbank und Bucket), zeigt Bilder nur als Bild und lädt PDFs nur herunter; nichts davon wird als Seite im Browser geöffnet. Keine Passwörter in Dokumenten ablegen; Fotos können den Aufnahmeort enthalten. Restrisiken (signierte Links zum Lesen und Hochladen, Zwischenspeicher) und was am echten Projekt ungeprüft ist: [`13-portal.md`](13-portal.md#anlagedoku).
 
 ## Verwaltung im Browser
 

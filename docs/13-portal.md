@@ -152,7 +152,8 @@ Grundlage ist der Entscheid E8 in [`ENTSCHEIDE.md`](ENTSCHEIDE.md). Pro Anlage l
 
 - Beim Hochladen ist «nur Solarmaa» vorgewählt. Ein Kunde sieht ein Dokument erst, wenn es fertig hochgeladen und auf «auch für Kunde» gestellt ist; ohne freigegebenes Dokument sieht er die Karte gar nicht.
 - Das prüfen die Datenbank (Tabelle `dokumente`, Funktionen `dokument_…`) und die Regeln auf dem Storage-Bucket `anlagedoku`, nicht die Webseite. Der Bucket ist privat: Es gibt keine öffentlichen Adressen, jede Datei wird mit der Anmeldung abgerufen.
-- Die Webseite prüft beim Hochladen den Inhalt der Datei (die ersten Bytes), nicht nur die Endung. SVG, HTML und andere Typen werden abgewiesen, ebenso vom Bucket (erlaubte Typen) und von der Datenbank.
+- Neben den erlaubenden Regeln stehen für `anlagedoku` einschränkende Regeln (`as restrictive`, für alle Rollen): Legt später jemand eine weiter gefasste Regel auf `storage.objects` an (etwa für einen anderen Bucket, aber ohne Filter auf den Bucket), bleibt `anlagedoku` trotzdem geschützt; Ändern einer Datei ist nie erlaubt.
+- **Typ und Inhalt:** Die *Typangabe* einer Datei (`Content-Type`) prüfen drei Stellen: Datenbank (`dokument_anlegen` und `dokument_fertig`), Bucket (erlaubte Typen) und Webseite. Den *Inhalt* (die ersten Bytes) prüft nur die Webseite beim Hochladen; die Datenbank kann die Datei nicht lesen. Wer an der Webseite vorbei eine Datei mit falscher Typangabe hochlädt (nur Solarmaa mit Zwei-Faktor kann das), wird darum nicht aufgehalten. Abgefedert wird das bei der Anzeige: Das Portal liefert jede Datei mit dem festen Typ aus seiner eigenen Liste aus, zeigt Bilder nur als Bild (`<img>`) und lädt PDFs nur herunter. Eine Datei wird nie als HTML oder SVG im Browser geöffnet.
 - Bilder werden in der Seite angezeigt, PDFs nur heruntergeladen (keine Vorschau im Browser). Der Dateiname beim Herunterladen ist bereinigt.
 - **Keine Passwörter oder Zugangsdaten** in Dokumenten ablegen. Fotos können den Aufnahmeort (GPS) enthalten; das Portal entfernt ihn nicht. Wer das nicht will, entfernt die Angaben vor dem Hochladen.
 - Eine Anlage mit Dokumenten lässt sich nicht löschen: zuerst alle Dokumente löschen.
@@ -162,11 +163,12 @@ Grundlage ist der Entscheid E8 in [`ENTSCHEIDE.md`](ENTSCHEIDE.md). Pro Anlage l
 1. **Hochladen:** Das Portal reserviert einen Speicherort (`dokument_anlegen`, Zustand «unvollständig»), lädt die Datei genau dorthin (`<anlage>/<dokument>.<endung>`, der Dateiname des Nutzers kommt nie in den Pfad) und meldet sie fertig (`dokument_fertig`). Die Datenbank prüft dabei Typ und Grösse der gespeicherten Datei. Eine Reservierung gilt eine Stunde.
 2. **Unvollständig:** Ist das Hochladen abgebrochen (Verbindung weg, Datei abgewiesen), bleibt der Eintrag für Solarmaa als «unvollständig» stehen, mit «Fertigstellen» und «Löschen». Kunden sehen ihn nie.
 3. **Löschen** (zweimal tippen): Zuerst wird das Dokument in der Datenbank zum Löschen markiert (für den Kunden sofort weg), dann die Datei im Bucket gelöscht, dann der Eintrag. Liegt die Datei noch im Bucket, lehnt die Datenbank das Entfernen des Eintrags ab («Datei noch vorhanden, erneut versuchen»); der Eintrag steht dann als «wird gelöscht» in der Liste und lässt sich erneut löschen.
-4. Eine fertige Datei lässt sich nicht überschreiben. Für eine neue Fassung ein neues Dokument hochladen und das alte löschen.
+4. Über die normale Schnittstelle lässt sich eine fertige Datei nicht überschreiben (keine Regel für Ändern; siehe Restrisiko «Signierte Upload-Links»). Für eine neue Fassung ein neues Dokument hochladen und das alte löschen.
 
 ### Restrisiken
 
 - **Signierte Links:** Supabase Storage kann zeitlich begrenzte Links erzeugen (`/object/sign`). Das Portal nutzt sie nicht. Ob ein Konto, das eine Datei lesen darf, selbst einen solchen Link erzeugen kann, ist am echten Projekt nicht geprüft. Ein so erzeugter Link bliebe bis zu seinem Ablauf gültig, auch wenn das Dokument danach auf «nur Solarmaa» gestellt oder der Zugriff des Kunden entfernt wird. Darum: Was ein Kunde einmal sehen konnte, gilt als ihm bekannt.
+- **Signierte Upload-Links:** Supabase Storage kann auch Links zum Hochladen erzeugen (`/object/upload/sign`, mit «upsert» auch zum Überschreiben). Die Regeln werden nur beim Erzeugen des Links geprüft, nicht beim Hochladen selbst. Ein Solarmaa-Konto mit Zwei-Faktor, das gerade einen reservierten Pfad hat, könnte sich so einen Link erzeugen und damit innerhalb der Gültigkeit des Links eine bereits fertige Datei ersetzen; `dokument_fertig` prüft dann Typangabe und Grösse nicht erneut. Das Portal nutzt solche Links nicht. Wie genau Supabase hier die Regeln anwendet, ist am echten Projekt nicht geprüft. Betroffen ist nur, wer ohnehin alle Dokumente ändern und löschen darf.
 - **Zwischenspeicher:** Ob Supabase eine Datei nach dem Wechsel auf «nur Solarmaa» noch kurz aus einem Zwischenspeicher (CDN) ausliefert, ist nicht geprüft. Das Portal lädt Dateien immer mit `cache: no-store` und speichert sie mit `Cache-Control: no-store`.
 - Wer eine heruntergeladene Datei hat, behält sie. Die Sichtbarkeit wirkt nur auf künftige Abrufe.
 
@@ -175,7 +177,7 @@ Grundlage ist der Entscheid E8 in [`ENTSCHEIDE.md`](ENTSCHEIDE.md). Pro Anlage l
 1. `portal/supabase/schema.sql` im Supabase-Projekt einspielen (SQL Editor). Das legt die Tabelle `dokumente`, die Funktionen, den Bucket `anlagedoku` und dessen Regeln an. Die bisherige Portal-Seite läuft damit unverändert weiter (geprüft mit `tests/portal/run.sh`, Abschnitt «Eingespielte Datenbank (Stufe 3) hochziehen»).
 2. Im Supabase-Dashboard kontrollieren:
    - **Storage → Buckets:** `anlagedoku` vorhanden, **nicht** «Public», Grenze 20 MB, erlaubte Typen `application/pdf`, `image/jpeg`, `image/png`, `image/webp`.
-   - **Storage → Policies** (bzw. Database → Policies, Tabelle `storage.objects`): genau `anlagedoku_lesen` (SELECT), `anlagedoku_hochladen` (INSERT), `anlagedoku_loeschen` (DELETE), alle für `authenticated`; keine UPDATE-Regel, keine weiteren Regeln für diesen Bucket.
+   - **Storage → Policies** (bzw. Database → Policies, Tabelle `storage.objects`): erlaubend genau `anlagedoku_lesen` (SELECT), `anlagedoku_hochladen` (INSERT), `anlagedoku_loeschen` (DELETE), alle für `authenticated`; einschränkend (restrictive) `anlagedoku_schranke_lesen`, `…_hochladen`, `…_aendern`, `…_loeschen` für `public`. Keine erlaubende UPDATE-Regel, keine weiteren Regeln für diesen Bucket.
    - Meldet der SQL Editor beim Einspielen einen Rechtefehler bei `storage.buckets` oder `create policy … on storage.objects`, **abbrechen** und melden; nicht über das Dashboard «nachbauen».
 3. Dann die Portal-Seite von `stabil` veröffentlichen. Ohne neue Datenbank zeigt die neue Seite «Dokumente nicht verfügbar», der Rest läuft weiter.
 4. Ein Testdokument hochladen («nur Solarmaa»), mit einem Kundenkonto prüfen, dass es nicht sichtbar ist, dann freigeben und erneut prüfen. Danach löschen.
@@ -193,9 +195,16 @@ Geprüft, nur lokal:
 - Datenbankregeln in einer lokalen Postgres-Datenbank mit nachgebildetem Storage-Schema (`tests/portal/stub.sql`): neue Datenbank, wiederholt eingespielt (auch nach Verstellen des Buckets), hochgezogen von Stufe 1 und vom eingespielten Stand der Stufe 3 (`tests/portal/test_dokumente.sql`).
 - Portal-Seite im Handy-Format gegen die Attrappe (`tests/portal/run.sh --browser`): Hochladen, Vorschau, Herunterladen, Umbenennen, Sichtbarkeit, Löschen, Ablehnungen, Kunde und fremdes Konto, verspätete Antworten, Abmelden während Laden und Hochladen.
 
+Am echten Projekt nachgesehen (14.11.2026, nur lesend):
+
+- Spalten von `storage.buckets` und `storage.objects`; beide gehören `supabase_storage_admin`, RLS auf `storage.objects` ist an. Noch kein Bucket vorhanden.
+- Auf `storage.objects` gibt es heute **keine** Regeln (Policies).
+- Die Rolle `postgres` hat `BYPASSRLS` und darf `storage.objects` lesen. Damit können `dokument_fertig` und `dokument_loeschen` (security definer, Eigentümer `postgres`) die Datei im Bucket nachsehen.
+- `storage.foldername`, `storage.filename`, `storage.extension` existieren.
+
 **Nicht geprüft** (nur am echten Projekt möglich):
 
-- Das SQL im echten Projekt: Einfügen in `storage.buckets`, `create policy` auf `storage.objects` als Rolle `postgres`, Lesen von `storage.objects` in den Funktionen `dokument_fertig` und `dokument_loeschen`.
+- Das Einspielen selbst: Einfügen in `storage.buckets` und `create policy` auf `storage.objects` als Rolle `postgres`.
 - Die Storage-Schnittstelle von Supabase im Detail: Pfade (`/storage/v1/object/anlagedoku/…`, `…/object/authenticated/…`, Löschen mit `prefixes`), `x-upsert`, Statuscodes und Form der Fehler, Antwort beim Löschen, Feldnamen `size` und `mimetype` in `metadata`, ob Grenze und erlaubte Typen des Buckets durchgesetzt werden, ob Storage beim Hochladen und Löschen die Regeln wie nachgebildet anwendet.
 - Zwischenspeicher (CDN) nach einem Wechsel der Sichtbarkeit; ob Kunden selbst signierte Links erzeugen können.
 - Die Inhalts-Sicherheitsrichtlinie (`img-src … blob:`) auf Vercel; Herunterladen auf iOS und Android.
