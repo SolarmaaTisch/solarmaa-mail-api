@@ -4,23 +4,28 @@ schema.sql; nachgebildet ist nur, was Supabase davor schaltet.
 
   PGHOST=… PGPORT=… PGDATABASE=… python3 fake_supabase.py <portal/web> <port>
 
+Dazu ein Mini-Storage (Hochladen, Abrufen, Löschen) in der Form der Supabase-Storage-API: Die Regeln
+auf storage.objects sind die echten aus schema.sql, die Dateien liegen in einem Temp-Ordner.
+
 Nicht nachgebildet: echte Passwörter und TOTP-Codes (Code ist immer 424242), signierte Tokens,
-PostgREST im Detail. Bindet nur an 127.0.0.1. Siehe README.md.
+PostgREST und Storage im Detail. Bindet nur an 127.0.0.1. Inhalte werden nie protokolliert. Siehe README.md.
 """
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 WEB = Path(sys.argv[1]).resolve()
 PORT = int(sys.argv[2])
@@ -36,8 +41,15 @@ RPC = {"ist_admin": [], "hat_2fa": [],
        "befehl_anlegen": [("p_anlage", "uuid"), ("p_art", "text"), ("p_nutzlast", "jsonb")],
        "pi_melden": [("p_token", "text"), ("p_daten", "jsonb")],
        "pi_ergebnis": [("p_token", "text"), ("p_befehl", "uuid"), ("p_ok", "boolean"), ("p_text", "text")],
-       "pi_konfig": [("p_token", "text"), ("p_text", "text")]}
-VOID = {"anlage_loeschen", "pi_ergebnis", "pi_konfig"}
+       "pi_konfig": [("p_token", "text"), ("p_text", "text")],
+       "dokument_anlegen": [("p_anlage", "uuid"), ("p_titel", "text"), ("p_kategorie", "text"), ("p_dateiname", "text"),
+                            ("p_typ", "text"), ("p_groesse", "bigint"), ("p_sichtbar", "boolean")],
+       "dokument_fertig": [("p_id", "uuid")],
+       "dokument_aendern": [("p_id", "uuid"), ("p_titel", "text"), ("p_kategorie", "text"), ("p_sichtbar", "boolean")],
+       "dokument_loeschen_beginnen": [("p_id", "uuid")], "dokument_loeschen": [("p_id", "uuid")]}
+VOID = {"anlage_loeschen", "pi_ergebnis", "pi_konfig", "dokument_aendern", "dokument_loeschen_beginnen", "dokument_loeschen"}
+STORAGE = "/storage/v1/object/"
+DATEIEN = Path(tempfile.mkdtemp(prefix="smstorage."))      # im TMPDIR von run.sh, wird dort weggeräumt
 ID = re.compile(r"^[a-z_][a-z0-9_]*$")
 FEHLER = re.compile(r"ERROR:\s+([0-9A-Z]{5}):\s*(.*)")
 FAKTOREN: dict[str, list[dict]] = {}       # Konto -> Zwei-Faktor-Einträge (nur im Speicher)
@@ -90,8 +102,14 @@ def sitzung(uid: str, email: str, aal: str) -> dict:
             "token_type": "bearer", "expires_in": 3600, "user": {"id": uid, "email": email}}
 
 
-def sql(claims: dict | None, stmt: str) -> str:
-    if claims:
+def ablage(bucket: str, name: str) -> Path:
+    return DATEIEN / hashlib.sha256(f"{bucket}/{name}".encode()).hexdigest()
+
+
+def sql(claims: dict | None, stmt: str, als_dienst: bool = False) -> str:
+    if als_dienst:
+        pre = ""          # wie Supabase Storage intern (Bucket-Angaben lesen)
+    elif claims:
         pre = f"select set_config('request.jwt.claims', {q(json.dumps(claims))}, false); set role authenticated; "
     else:
         pre = "set role anon; "
@@ -143,6 +161,8 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         u = urlparse(self.path)
         c = self.claims()
+        if u.path.startswith(STORAGE):
+            return self.speicher_lesen(u, c)
         if u.path == "/auth/v1/user":
             if not c:
                 return self.out(401, {"msg": "JWT fehlt"})
@@ -195,6 +215,8 @@ class H(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ POST / DELETE
     def do_POST(self):  # noqa: N802
         u = urlparse(self.path)
+        if u.path.startswith(STORAGE):
+            return self.speicher_hochladen(u, self.claims())
         body = self.body()
         c = self.claims()
         if u.path == "/auth/v1/token":
@@ -227,7 +249,87 @@ class H(BaseHTTPRequestHandler):
         self.out(404, {})
 
     def do_DELETE(self):  # noqa: N802
-        self.faktoren(urlparse(self.path).path, {}, self.claims(), loeschen=True)
+        u = urlparse(self.path)
+        if u.path.startswith(STORAGE):
+            return self.speicher_loeschen(u, self.claims())
+        self.faktoren(u.path, {}, self.claims(), loeschen=True)
+
+    # ------------------------------------------------------------ Storage
+    # Form der Supabase-Storage-API (am echten Projekt ungeprüft): Fehler als HTTP 400 mit dem
+    # eigentlichen Status als Text in statusCode.
+    def speicherfehler(self, status: str, fehler: str, text: str):
+        return self.out(400, {"statusCode": status, "error": fehler, "message": text})
+
+    def speicher_lesen(self, u, c):
+        teile = [unquote(x) for x in u.path[len(STORAGE):].split("/")]
+        if teile[0] == "public":
+            return self.speicherfehler("400", "InvalidRequest", "Bucket ist nicht öffentlich")
+        if teile[0] == "authenticated":
+            teile = teile[1:]
+        if not c:
+            return self.speicherfehler("403", "Unauthorized", "Anmeldung fehlt")
+        if len(teile) < 2:
+            return self.speicherfehler("400", "InvalidRequest", "Pfad fehlt")
+        bucket, name = teile[0], "/".join(teile[1:])
+        try:      # mit der Rolle des Kontos: die Leseregel entscheidet
+            # immer genau eine Zeile (sonst wäre die letzte Zeile die Ausgabe von set_config)
+            typ = sql(c, "select 'typ:' || coalesce((select metadata ->> 'mimetype' from storage.objects "
+                         f"where bucket_id = {q(bucket)} and name = {q(name)}), '')")[4:]
+        except DbFehler as e:
+            return self.speicherfehler("403" if e.code == "42501" else "500", "Unauthorized", e.text)
+        f = ablage(bucket, name)
+        if not typ or not f.is_file():
+            return self.speicherfehler("404", "not_found", "Object not found")
+        return self.out(200, f.read_bytes(), typ)
+
+    def speicher_hochladen(self, u, c):
+        n = int(self.headers.get("Content-Length") or 0)
+        daten = self.rfile.read(n)
+        teile = [unquote(x) for x in u.path[len(STORAGE):].split("/")]
+        if not c:
+            return self.speicherfehler("403", "Unauthorized", "Anmeldung fehlt")
+        if len(teile) < 2 or teile[0] in ("public", "authenticated", "sign"):
+            return self.speicherfehler("400", "InvalidRequest", "Pfad fehlt")
+        bucket, name = teile[0], "/".join(teile[1:])
+        b = json.loads(sql(None, f"select coalesce(to_jsonb(b), 'null') from storage.buckets b where id = {q(bucket)}", als_dienst=True) or "null")
+        if not b:
+            return self.speicherfehler("404", "Bucket not found", "Bucket not found")
+        if b.get("file_size_limit") and len(daten) > b["file_size_limit"]:
+            return self.speicherfehler("413", "Payload too large", "The object exceeded the maximum allowed size")
+        typ = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if b.get("allowed_mime_types") and typ not in b["allowed_mime_types"]:
+            return self.speicherfehler("415", "invalid_mime_type", f"mime type {typ} is not supported")
+        meta = json.dumps({"size": len(daten), "mimetype": typ, "cacheControl": self.headers.get("Cache-Control", "")})
+        stmt = (f"insert into storage.objects (bucket_id, name, owner, owner_id, metadata) values "
+                f"({q(bucket)}, {q(name)}, {q(c['sub'])}, {q(c['sub'])}, {q(meta)}::jsonb)")
+        if (self.headers.get("x-upsert") or "").lower() == "true":
+            stmt += " on conflict (bucket_id, name) do update set metadata = excluded.metadata, updated_at = now()"
+        try:      # mit der Rolle des Kontos: die Regel zum Hochladen entscheidet
+            oid = sql(c, stmt + " returning id")
+        except DbFehler as e:
+            if e.code == "23505":
+                return self.speicherfehler("409", "Duplicate", "The resource already exists")
+            return self.speicherfehler("403", "Unauthorized", "new row violates row-level security policy")
+        ablage(bucket, name).write_bytes(daten)
+        return self.out(200, {"Key": f"{bucket}/{name}", "Id": oid})
+
+    def speicher_loeschen(self, u, c):
+        body = self.body()
+        bucket = unquote(u.path[len(STORAGE):]).strip("/")
+        if not c:
+            return self.speicherfehler("403", "Unauthorized", "Anmeldung fehlt")
+        namen = body.get("prefixes")
+        if not bucket or "/" in bucket or not isinstance(namen, list) or not all(isinstance(x, str) for x in namen):
+            return self.speicherfehler("400", "InvalidRequest", "prefixes fehlt")
+        liste = "array[" + ",".join(q(x) for x in namen) + "]::text[]" if namen else "array[]::text[]"
+        try:      # mit der Rolle des Kontos: nur, was die Regel zum Löschen erlaubt; sonst leere Liste
+            weg = json.loads(sql(c, f"with x as (delete from storage.objects where bucket_id = {q(bucket)} and name = any({liste}) "
+                                    f"returning id, name, bucket_id) select coalesce(jsonb_agg(to_jsonb(x)), '[]'::jsonb) from x"))
+        except DbFehler as e:
+            return self.speicherfehler("403", "Unauthorized", e.text)
+        for o in weg:
+            ablage(bucket, o["name"]).unlink(missing_ok=True)
+        return self.out(200, weg)
 
     def faktoren(self, pfad: str, body: dict, c, loeschen: bool = False):
         """Zwei-Faktor in der Form der Supabase-Auth-API (GoTrue); am echten Projekt ungeprüft."""

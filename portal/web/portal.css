@@ -83,3 +83,14 @@ textarea:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; 
 .cmd { flex: 1 1 100%; min-width: 0; }
 .cmd .pill { margin-left: 6px; } .pill.warn { color: var(--warn); }
 .cmd-res { display: block; font-size: 0.86rem; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 9em; overflow: auto; }
+/* Anlagedoku */
+select { width: 100%; font: inherit; font-size: 16px; min-height: 46px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+select:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.dok { flex: 1 1 100%; min-width: 0; }
+.dok .pill { margin-right: 6px; }
+.btn.dok-titel { max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
+.dok-detail { border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; background: var(--bg); min-width: 0; }
+.dok-detail h3 { margin-top: 0; overflow-wrap: anywhere; }
+.dok-detail p { overflow-wrap: anywhere; }
+.dok-bild { display: block; max-width: 100%; height: auto; max-height: 60vh; border-radius: 10px; margin: 10px 0; background: #fff; }
+#dokFelder { display: grid; gap: 8px; }

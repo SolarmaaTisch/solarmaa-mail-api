@@ -90,6 +90,38 @@
     <svg class="chart" id="chDay" role="img" aria-label="Tagesverlauf"></svg>
     <h2>Letzte 30 Tage</h2>
     <svg class="chart" id="chDays" role="img" aria-label="Letzte 30 Tage"></svg>
+    <div class="card" id="pDoku" hidden>
+      <h2>Dokumente</h2>
+      <p class="muted small" id="dokHinweis" hidden></p>
+      <ul class="list" id="dokListe"></ul>
+      <div class="dok-detail" id="dokDetail" hidden>
+        <h3 id="dokDetailTitel"></h3>
+        <p class="muted small" id="dokInfo"></p>
+        <img id="dokBild" class="dok-bild" alt="Vorschau des Dokuments" hidden>
+        <div class="row"><button class="btn ghost" id="dokLaden" type="button">Herunterladen</button><button class="btn ghost" id="dokZu" type="button">Schliessen</button></div>
+        <a id="dokLink" hidden></a>
+        <div id="dokBearbeiten" hidden>
+          <div id="dokFelder">
+            <label for="dokTitel">Titel</label><input id="dokTitel" maxlength="120" autocomplete="off">
+            <label for="dokKategorie">Kategorie</label><select id="dokKategorie"><option value="schema">Schema</option><option value="datenblatt">Datenblatt</option><option value="foto">Foto</option><option value="protokoll">Protokoll</option><option value="sonstiges" selected>Sonstiges</option></select>
+            <label for="dokSichtbar">Sichtbar für</label><select id="dokSichtbar"><option value="false" selected>nur Solarmaa</option><option value="true">auch für Kunde</option></select>
+          </div>
+          <div class="row mt"><button class="btn primary" id="dokSpeichern" type="button">Speichern</button><button class="btn ghost" id="dokFertig" type="button" hidden>Fertigstellen</button><button class="btn ghost" id="dokLoeschen" type="button">Löschen</button></div>
+        </div>
+      </div>
+      <form id="fDok" hidden novalidate>
+        <h3>Dokument hochladen</h3>
+        <label for="dokDatei">Datei: PDF, JPEG, PNG oder WebP, höchstens 20 MB</label>
+        <input id="dokDatei" type="file" accept="application/pdf,image/jpeg,image/png,image/webp">
+        <label for="dokNeuTitel">Titel (leer: Dateiname)</label><input id="dokNeuTitel" maxlength="120" autocomplete="off">
+        <label for="dokNeuKategorie">Kategorie</label><select id="dokNeuKategorie"><option value="schema">Schema</option><option value="datenblatt">Datenblatt</option><option value="foto">Foto</option><option value="protokoll">Protokoll</option><option value="sonstiges" selected>Sonstiges</option></select>
+        <label for="dokNeuSichtbar">Sichtbar für</label><select id="dokNeuSichtbar"><option value="false" selected>nur Solarmaa</option><option value="true">auch für Kunde</option></select>
+        <p class="muted small">Keine Passwörter oder Zugangsdaten in Dokumenten ablegen. Fotos können den Aufnahmeort (GPS) enthalten; er wird nicht entfernt.</p>
+        <button class="btn primary" type="submit" id="dokHochladen">Hochladen</button>
+      </form>
+      <p class="muted small" id="dokMsg" role="status" hidden></p>
+      <p class="err" id="dokErr" role="alert" hidden></p>
+    </div>
     <div class="card" id="pAdmin" hidden>
       <h2>Zugriff für Kunden</h2>
       <ul class="list" id="members"></ul>

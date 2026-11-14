@@ -118,6 +118,7 @@
     $("pState").textContent = ""; $("pState").className = "pill";
     ["pAlarm", "pCurtail", "pAdmin", "pFern", "memErr"].forEach((id) => { $(id).hidden = true; });
     $("mEmail").value = "";
+    dokLeeren();
   }
   async function openPlant(id) { current = id; show("vPlant"); await loadPlant(id, true).catch(onErr); }
 
@@ -159,6 +160,7 @@
     drawDays(tw, d30);
     $("pAdmin").hidden = !admin;
     $("pFern").hidden = !admin;
+    if (first) loadDoku(id).catch((e) => dokFehler(m, id, e));
     if (admin && first) { loadMembers(id).catch((e) => fehlerBei(m, "memErr", e)); loadFern(id, p).catch(onErr); }
     else if (admin && fernId() === id) { fern.p = p; fernStatus(); }
   }
@@ -350,6 +352,7 @@
     await loadMfa();
     if (m !== marke) return;
     fernStatus(); loadBefehle().catch(onErr);
+    dokListe().catch((e) => dokFehler(m, dokId(), e));        // jetzt auch interne Dokumente
   }
   $("fMfa").addEventListener("submit", async (ev) => {
     ev.preventDefault(); $("mfaErr").hidden = true;
@@ -457,6 +460,275 @@
     } catch (e) { if (m === marke) showErr("fernErr", e); onErr(e); }
   });
 
+  /* ------------------------------------------------------------ Anlagedoku (E8) */
+  // Wer was sieht und darf, entscheiden die Datenbank und die Regeln auf dem Storage-Bucket. Wie bei der
+  // Fernwartung ist dok.id die einzige Quelle für die Anlage: gesetzt nur in loadDoku(), nachdem
+  // loadPlant() die Anlage bestätigt hat. Jede Fortsetzung nach einem await prüft marke und dokId().
+  // dok.abbruch bricht das Laden einer Datei ab, dok.hoch das Hochladen; dok.url ist die Blob-Adresse
+  // der geladenen Datei und wird beim Schliessen, Wechseln und Abmelden freigegeben.
+  const TYPEN = { "application/pdf": { endung: "pdf", name: "PDF" }, "image/jpeg": { endung: "jpg", name: "JPEG" }, "image/png": { endung: "png", name: "PNG" }, "image/webp": { endung: "webp", name: "WebP" } };
+  const KATEGORIEN = { schema: "Schema", datenblatt: "Datenblatt", foto: "Foto", protokoll: "Protokoll", sonstiges: "Sonstiges" };
+  const DOK_MAX = 20 * 1024 * 1024;
+  const DOK_COLS = "id,anlage_id,pfad,titel,kategorie,dateiname,typ,groesse,sichtbar_kunde,status,erstellt";
+  const dok = { id: null, liste: [], sel: null, blob: null, url: null, abbruch: null, hoch: null };
+  const dokId = () => (dok.id && dok.id === anlage && anlage === current ? dok.id : null);
+  const typBekannt = (t) => Object.prototype.hasOwnProperty.call(TYPEN, t);
+  const istBild = (t) => typBekannt(t) && t !== "application/pdf";
+  const pfadUrl = (pfad) => String(pfad).split("/").map(encodeURIComponent).join("/");
+  const groesse = (b) => (b == null ? "" : b < 1024 * 1024 ? `${nf0.format(Math.max(1, Math.round(b / 1024)))} kB` : `${nf1.format(b / 1024 / 1024)} MB`);
+  const dokMsg = (text) => { $("dokMsg").textContent = text; $("dokMsg").hidden = !text; };
+  const dokHinweis = (text) => { $("dokHinweis").textContent = text; $("dokHinweis").hidden = !text; };
+  const abgebrochen = (e) => e && (e.veraltet || e.name === "AbortError");
+
+  // Supabase Storage: Rohdaten senden bzw. eine Datei lesen. Sitzung wie bei rpc() über token().
+  async function speicher(path, opt = {}) {
+    const tok = await token();
+    const r = await fetch(URL_ + path, { ...opt, headers: { apikey: KEY, Authorization: `Bearer ${tok}`, ...(opt.headers || {}) } });
+    if (!r.ok) {
+      let d = null;
+      try { d = await r.json(); } catch (e) { /* leer */ }
+      throw new ApiError(r.status, (d && (d.message || d.error)) || `Fehler ${r.status}`);
+    }
+    return r;
+  }
+  function dokFehler(m, id, e) {
+    if (abgebrochen(e)) return;
+    onErr(e);
+    if (e.status === 401 || m !== marke || !id || dokId() !== id) return;
+    $("pDoku").hidden = false;
+    showErr("dokErr", e);
+  }
+  function dokDetailLeeren() {
+    if (dok.abbruch) dok.abbruch.abort();
+    dok.abbruch = null; dok.sel = null; dok.blob = null;
+    if (dok.url) URL.revokeObjectURL(dok.url);
+    dok.url = null;
+    $("dokBild").removeAttribute("src"); $("dokBild").hidden = true;
+    $("dokLink").removeAttribute("href"); $("dokLink").removeAttribute("download");
+    $("dokDetailTitel").textContent = ""; $("dokInfo").textContent = "";
+    $("dokTitel").value = ""; $("dokKategorie").value = "sonstiges"; $("dokSichtbar").value = "false";
+    $("dokDetail").hidden = true; $("dokBearbeiten").hidden = true;
+    sureReset("dokLoeschen");
+  }
+  function dokLeeren() {
+    if (dok.hoch) dok.hoch.abort();
+    dok.hoch = null; dok.id = null; dok.liste = [];
+    dokDetailLeeren();
+    $("dokListe").textContent = ""; $("fDok").reset();
+    ["dokHinweis", "dokMsg", "dokErr"].forEach((id) => { $(id).textContent = ""; $(id).hidden = true; });
+    $("pDoku").hidden = true; $("fDok").hidden = true; $("dokHochladen").disabled = false;
+  }
+  async function loadDoku(id) {
+    dokLeeren();
+    if (anlage !== id || current !== id) return;
+    dok.id = id;
+    await dokListe();
+  }
+  function dokPills(d) {
+    if (d.status === "hochladen") return '<span class="pill warn">unvollständig</span>';
+    if (d.status === "loeschen") return '<span class="pill bad">wird gelöscht</span>';
+    return d.sichtbar_kunde ? '<span class="pill ok">für Kunde</span>' : '<span class="pill off">nur Solarmaa</span>';
+  }
+  async function dokListe() {
+    const id = dokId(), m = marke;
+    if (!id) return;
+    let rows;
+    try { rows = await get(`dokumente?select=${DOK_COLS}&anlage_id=eq.${encodeURIComponent(id)}&order=erstellt.desc`); }
+    catch (e) {
+      if (m !== marke || dokId() !== id || e.status !== 404) throw e;
+      // Datenbank ohne Anlagedoku (noch nicht eingespielt): nur diese Karte fällt aus
+      $("pDoku").hidden = !admin; $("fDok").hidden = true; $("dokListe").textContent = "";
+      dokHinweis("Dokumente nicht verfügbar.");
+      return;
+    }
+    if (m !== marke || dokId() !== id) return;
+    dok.liste = rows;
+    // Kunden ohne freigegebene Dokumente: keine Karte (ausser eine Fehlermeldung steht darin)
+    $("pDoku").hidden = !admin && !rows.length && $("dokErr").hidden;
+    $("fDok").hidden = !admin;
+    dokHinweis(admin && aal() !== "aal2" ? "Interne Dokumente, Hochladen und Ändern erst nach der Zwei-Faktor-Bestätigung (unten bei «Fernwartung»)." : "");
+    $("dokListe").innerHTML = rows.map((d) => `<li><span class="dok"><button class="btn link dok-titel" type="button" data-id="${esc(d.id)}" data-anlage="${esc(d.anlage_id)}">${esc(d.titel)}</button><br><span class="pill">${esc(KATEGORIEN[d.kategorie] || d.kategorie)}</span>${admin ? dokPills(d) : ""}<span class="muted small">${esc([typBekannt(d.typ) ? TYPEN[d.typ].name : "", groesse(d.groesse), zeit(d.erstellt)].filter(Boolean).join(" · "))}</span></span></li>`).join("")
+      || `<li class="muted">${admin ? "Noch keine Dokumente" : "Keine Dokumente freigegeben"}</li>`;
+    $("dokListe").querySelectorAll("button[data-id]").forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.anlage !== id || dokId() !== id) return;      // Knopf gehört nicht (mehr) zur angezeigten Anlage
+      const d = dok.liste.find((x) => x.id === b.dataset.id);
+      if (d) dokOeffnen(d);
+    }));
+    // geöffnetes Dokument: verschwunden -> schliessen, sonst Angaben auffrischen (Datei bleibt geladen)
+    if (dok.sel) {
+      const neu = rows.find((x) => x.id === dok.sel.id);
+      if (!neu || neu.status !== dok.sel.status) dokDetailLeeren();
+      else { dok.sel = neu; dokDetailZeigen(); }
+    }
+  }
+  function dokDetailZeigen() {
+    const d = dok.sel;
+    if (!d) return;
+    $("dokDetailTitel").textContent = d.titel;
+    $("dokInfo").textContent = [KATEGORIEN[d.kategorie], d.dateiname, typBekannt(d.typ) ? TYPEN[d.typ].name : "", groesse(d.groesse), zeit(d.erstellt),
+      admin ? (d.status === "hochladen" ? "unvollständig" : d.status === "loeschen" ? "wird gelöscht" : d.sichtbar_kunde ? "auch für Kunde" : "nur Solarmaa") : ""].filter(Boolean).join(" · ");
+    $("dokLaden").hidden = d.status !== "fertig";
+    $("dokBearbeiten").hidden = !admin;
+    $("dokFelder").hidden = d.status === "loeschen"; $("dokSpeichern").hidden = d.status === "loeschen";
+    $("dokFertig").hidden = d.status !== "hochladen";
+  }
+  function dokOeffnen(d) {
+    const id = dokId(), m = marke;
+    if (!id || d.anlage_id !== id) return;
+    dokDetailLeeren();
+    $("dokErr").hidden = true; dokMsg("");
+    dok.sel = d;
+    $("dokTitel").value = d.titel; $("dokKategorie").value = d.kategorie; $("dokSichtbar").value = d.sichtbar_kunde ? "true" : "false";
+    dokDetailZeigen();
+    $("dokDetail").hidden = false;
+    if (d.status === "fertig" && istBild(d.typ)) dokVorschau(d).catch((e) => dokLadeFehler(m, id, e));
+  }
+  // Datei holen (nie über eine Adresse im Dokument, immer mit der Sitzung). Den Typ des Blobs bestimmt die
+  // eigene Liste, nie der Server: So entsteht daraus nur ein Bild oder ein PDF zum Herunterladen.
+  async function dokDatei(d) {
+    const id = dokId(), m = marke;
+    if (!id || d.anlage_id !== id || dok.sel?.id !== d.id || !typBekannt(d.typ)) throw veraltet();
+    if (dok.blob) return dok.blob;
+    if (dok.abbruch) dok.abbruch.abort();
+    const ac = new AbortController();
+    dok.abbruch = ac;
+    const r = await speicher(`/storage/v1/object/authenticated/anlagedoku/${pfadUrl(d.pfad)}`, { signal: ac.signal, cache: "no-store" });
+    const daten = await r.arrayBuffer();
+    if (m !== marke || dokId() !== id || dok.sel?.id !== d.id || ac.signal.aborted) throw veraltet();
+    dok.abbruch = null;
+    dok.blob = new Blob([daten], { type: d.typ });
+    dok.url = URL.createObjectURL(dok.blob);
+    return dok.blob;
+  }
+  async function dokVorschau(d) {
+    await dokDatei(d);
+    if (dok.sel?.id !== d.id || !dok.url) return;
+    $("dokBild").src = dok.url; $("dokBild").hidden = false;
+  }
+  function dokLadeFehler(m, id, e) {
+    if (abgebrochen(e) || e.status === 401) return dokFehler(m, id, e);
+    dokFehler(m, id, new Error("Die Datei konnte nicht geladen werden. Sie ist nicht mehr vorhanden oder nicht mehr freigegeben."));
+    if (m === marke && dokId() === id) dokListe().catch((e2) => dokFehler(m, id, e2));
+  }
+  // Name zum Speichern: ohne Steuer-, Richtungs- und in Dateisystemen verbotene Zeichen, mit passender Endung
+  function dateiName(d) {
+    const t = TYPEN[d.typ];
+    let n = String(d.dateiname || "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩/\\:*?"<>|]/g, "_")
+      .replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 120);
+    if (!n) n = "dokument";
+    const endung = n.includes(".") ? n.split(".").pop().toLowerCase() : "";
+    if (!(endung === t.endung || (t.endung === "jpg" && endung === "jpeg"))) n += "." + t.endung;
+    return n;
+  }
+  $("dokZu").addEventListener("click", () => { dokDetailLeeren(); $("dokErr").hidden = true; dokMsg(""); });
+  $("dokLaden").addEventListener("click", async () => {
+    const d = dok.sel, id = dokId(), m = marke;
+    if (!id || !d || d.anlage_id !== id || d.status !== "fertig") return;
+    $("dokErr").hidden = true;
+    try {
+      await dokDatei(d);
+      if (m !== marke || dokId() !== id || dok.sel?.id !== d.id || !dok.url) return;
+      // Herunterladen über einen Link mit download-Attribut: keine Anzeige im Browser, keine Navigation
+      const a = $("dokLink");
+      a.href = dok.url; a.download = dateiName(d);
+      a.click();
+    } catch (e) { dokLadeFehler(m, id, e); }
+  });
+  // Inhalt prüfen (erste Bytes), nicht Endung oder Angabe des Browsers
+  async function dateiTyp(f) {
+    const b = new Uint8Array(await f.slice(0, 12).arrayBuffer());
+    const ist = (ab, bytes) => bytes.every((x, i) => b[ab + i] === x);
+    if (ist(0, [0x25, 0x50, 0x44, 0x46, 0x2d])) return "application/pdf";              // %PDF-
+    if (ist(0, [0xff, 0xd8, 0xff])) return "image/jpeg";
+    if (ist(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+    if (ist(0, [0x52, 0x49, 0x46, 0x46]) && ist(8, [0x57, 0x45, 0x42, 0x50])) return "image/webp";   // RIFF....WEBP
+    return null;
+  }
+  $("fDok").addEventListener("submit", async (ev) => {
+    ev.preventDefault(); $("dokErr").hidden = true; dokMsg("");
+    const id = dokId(), m = marke;
+    if (!id || !admin) return;                             // Anlage noch nicht geladen: nichts senden
+    const fehler = (text) => showErr("dokErr", new Error(text));
+    const f = $("dokDatei").files[0];
+    if (!f) return fehler("Bitte eine Datei wählen.");
+    if (!f.size || f.size > DOK_MAX) return fehler("Die Datei ist leer oder grösser als 20 MB.");
+    const name = f.name.normalize("NFC");
+    if (!name || name.length > 120 || /[\u0000-\u001f\u007f-\u009f/\\]/.test(name)) return fehler("Der Dateiname ist länger als 120 Zeichen oder enthält unzulässige Zeichen. Bitte die Datei umbenennen.");
+    const titel = ($("dokNeuTitel").value.trim() || name.replace(/\.[^.]*$/, "").trim() || name).slice(0, 120);
+    const kat = $("dokNeuKategorie").value, sichtbar = $("dokNeuSichtbar").value === "true";
+    $("dokHochladen").disabled = true;
+    try {
+      const typ = await dateiTyp(f);
+      if (m !== marke || dokId() !== id) return;
+      if (!typ) return fehler("Nur PDF, JPEG, PNG oder WebP. Der Inhalt dieser Datei passt zu keinem davon.");
+      const r = await rpc("dokument_anlegen", { p_anlage: id, p_titel: titel, p_kategorie: kat, p_dateiname: name, p_typ: typ, p_groesse: f.size, p_sichtbar: sichtbar });
+      if (m !== marke || dokId() !== id) return;
+      const ac = new AbortController();
+      dok.hoch = ac;
+      try {
+        await speicher(`/storage/v1/object/anlagedoku/${pfadUrl(r.pfad)}`, { method: "POST", body: f, signal: ac.signal, headers: { "Content-Type": typ, "x-upsert": "false", "Cache-Control": "no-store" } });
+      } catch (e) {
+        if (abgebrochen(e) || e.status === 401) throw e;
+        throw new ApiError(e.status, "Die Datei wurde nicht angenommen. Der Eintrag steht als «unvollständig» in der Liste und kann gelöscht werden.");
+      } finally { if (dok.hoch === ac) dok.hoch = null; }
+      // Abgemeldet oder andere Anlage: nicht fertigstellen (der Eintrag bleibt «unvollständig»)
+      if (m !== marke || dokId() !== id || ac.signal.aborted) return;
+      await rpc("dokument_fertig", { p_id: r.id });
+      if (m !== marke || dokId() !== id) return;
+      $("fDok").reset(); dokMsg(`«${titel}» hochgeladen.`);
+      await dokListe();
+    } catch (e) {
+      dokFehler(m, id, e);
+      if (!abgebrochen(e) && e.status !== 401 && m === marke && dokId() === id) dokListe().catch((e2) => dokFehler(m, id, e2));
+    } finally { if (m === marke) $("dokHochladen").disabled = false; }
+  });
+  $("dokFertig").addEventListener("click", async () => {
+    const d = dok.sel, id = dokId(), m = marke;
+    if (!id || !d || d.anlage_id !== id || d.status !== "hochladen") return;
+    $("dokErr").hidden = true; dokMsg("");
+    try { await rpc("dokument_fertig", { p_id: d.id }); if (m !== marke || dokId() !== id) return; dokMsg("Fertiggestellt."); await dokListe(); }
+    catch (e) { dokFehler(m, id, e); }
+  });
+  $("dokSpeichern").addEventListener("click", async () => {
+    const d = dok.sel, id = dokId(), m = marke;
+    if (!id || !d || d.anlage_id !== id) return;
+    $("dokErr").hidden = true; dokMsg("");
+    const titel = $("dokTitel").value.trim();
+    if (!titel || titel.length > 120) return showErr("dokErr", new Error("Bitte einen Titel mit höchstens 120 Zeichen eingeben."));
+    try {
+      await rpc("dokument_aendern", { p_id: d.id, p_titel: titel, p_kategorie: $("dokKategorie").value, p_sichtbar: $("dokSichtbar").value === "true" });
+      if (m !== marke || dokId() !== id) return;
+      dokMsg("Gespeichert.");
+      await dokListe();
+    } catch (e) { dokFehler(m, id, e); }
+  });
+  // Löschen: zuerst in der Datenbank beginnen (für Kunden sofort weg), dann die Datei, dann die Zeile.
+  $("dokLoeschen").addEventListener("click", async () => {
+    const d = dok.sel, id = dokId(), m = marke;
+    if (!id || !d || d.anlage_id !== id) return;
+    if (!sure("dokLoeschen", "Wirklich löschen?")) return;
+    $("dokErr").hidden = true; dokMsg("");
+    try {
+      if (d.status !== "loeschen") await rpc("dokument_loeschen_beginnen", { p_id: d.id });
+      if (m !== marke || dokId() !== id) return;
+      const r = await speicher("/storage/v1/object/anlagedoku", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: [d.pfad] }) });
+      let weg = null;
+      try { weg = await r.json(); } catch (e) { /* leer */ }
+      if (m !== marke || dokId() !== id) return;
+      // Eine leere Antwortliste beweist nicht, dass die Datei weg ist. Das prüft dokument_loeschen() in der
+      // Datenbank selbst und lehnt ab, solange die Datei noch im Bucket liegt.
+      const geloescht = Array.isArray(weg) && weg.some((o) => o && o.name === d.pfad);
+      await rpc("dokument_loeschen", { p_id: d.id });
+      if (m !== marke || dokId() !== id) return;
+      dokDetailLeeren();
+      dokMsg(geloescht ? `«${d.titel}» gelöscht.` : `Eintrag «${d.titel}» gelöscht (die Datei lag nicht mehr im Speicher).`);
+      await dokListe();
+    } catch (e) {
+      dokFehler(m, id, e);
+      if (!abgebrochen(e) && e.status !== 401 && m === marke && dokId() === id) dokListe().catch((e2) => dokFehler(m, id, e2));
+    }
+  });
+
   /* ------------------------------------------------------------ Anmeldung */
   async function enter() {
     const a = anm;
@@ -494,7 +766,7 @@
   });
   // Zweistufige Rückfragen («Wirklich?»): gelten nur für die Ansicht, in der sie gestellt wurden, und
   // nur einige Sekunden. Sonst löste ein einzelner Klick bei einer anderen Anlage die Aktion aus.
-  const SURE = { tokenNew: "Neuen Pi-Token erzeugen", fernUpdate: "Update auslösen", fernKonfigSenden: "Konfiguration senden" };
+  const SURE = { tokenNew: "Neuen Pi-Token erzeugen", fernUpdate: "Update auslösen", fernKonfigSenden: "Konfiguration senden", dokLoeschen: "Löschen" };
   const SURE_MS = 8000, sureT = {};
   function sureReset(nur) {
     for (const id of nur ? [nur] : Object.keys(SURE)) { clearTimeout(sureT[id]); $(id).dataset.sure = ""; $(id).textContent = SURE[id]; }
@@ -515,8 +787,9 @@
     $("pAdmin").hidden = true; $("addOpen").hidden = true; $("tokenBox").hidden = true; $("fAdd").hidden = true;
     $("pAlarm").hidden = true; $("pCurtail").hidden = true;
     fernLeeren(); $("pFern").hidden = true;
+    dokLeeren();                                         // bricht Laden und Hochladen ab, gibt Blob-Adressen frei
     $("pState").textContent = ""; $("pState").className = "pill";
-    ["email", "pw", "mEmail", "npw", "aName", "aOrt", "aKwp"].forEach((id) => { $(id).value = ""; });
+    ["email", "pw", "mEmail", "npw", "aName", "aOrt", "aKwp", "dokTitel", "dokNeuTitel"].forEach((id) => { $(id).value = ""; });
     // alle hidden-, disabled- und Knopfzustände wie beim ersten Laden der Seite
     AUSGANG.forEach(([n, h, d, t]) => { n.hidden = h; n.disabled = d; if (t !== null) n.textContent = t; });
     show("vLogin");

@@ -46,7 +46,7 @@ function piRunde(token, ordner = piDir) {
     schritt = wo;
     const a = await p.evaluate(() => ({
       breit: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
-      klein: [...document.querySelectorAll("button, input, textarea, a")].filter((e) => { const r = e.getBoundingClientRect(); return r.width && !e.closest("[hidden]") && r.height < 44; }).map((e) => e.id || e.className),
+      klein: [...document.querySelectorAll("button, input, textarea, select, a")].filter((e) => { const r = e.getBoundingClientRect(); return r.width && !e.closest("[hidden]") && r.height < 44; }).map((e) => e.id || e.className),
       csp: window.__csp || [],
     }));
     ok(`${wo}: kein seitliches Überlaufen`, !a.breit);
@@ -343,6 +343,189 @@ function piRunde(token, ordner = piDir) {
   ok("… und die Anmeldeansicht bleibt stehen", (await p.isVisible("#vLogin")) && (await p.isHidden("#vPlant")));
   antworten.splice(0, antworten.length, ...antworten.filter((a) => !/^401 /.test(a)));      // Abfragen nach dem Abmelden dürfen 401 erhalten
 
+  // ---------------------------------------------------------------- Anlagedoku (E8)
+  schritt = "Anlagedoku";
+  const PDF = Buffer.from("%PDF-1.4\n% Solarmaa Test\n1 0 obj <<>> endobj\ntrailer <<>>\n%%EOF\n");
+  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>window.xss = 1</script></svg>');
+  const HTML = Buffer.from("<!doctype html><script>window.xss = 1</script>");
+  const dokZeile = (titel) => p.locator("#dokListe li", { hasText: titel });
+  const dokTitel = (titel) => p.locator("#dokListe button.dok-titel", { hasText: titel });
+  const hochladen = async (datei, titel, sichtbar = "false") => {
+    await p.setInputFiles("#dokDatei", datei);
+    await p.fill("#dokNeuTitel", titel);
+    await p.selectOption("#dokNeuSichtbar", sichtbar);
+    await p.tap("#dokHochladen");
+  };
+  const dokFehlerText = async (muster) => {
+    await p.waitForFunction((m) => { const e = document.getElementById("dokErr"); return e.checkVisibility() && new RegExp(m).test(e.textContent); }, muster.source, { timeout: 10000 });
+    return true;
+  };
+  // Aufruf an der Seite vorbei mit der Sitzung des angemeldeten Kontos, Antwort als Text (Storage)
+  const roh = (pfad, opt = {}) => p.evaluate(async ([pfad_, opt_]) => {
+    const s = JSON.parse(localStorage.getItem("sm_portal"));
+    const r = await fetch(window.PORTAL.url + pfad_, { method: opt_.method || "GET", body: opt_.body, headers: { apikey: window.PORTAL.key, Authorization: `Bearer ${s.access}`, ...(opt_.headers || {}) } });
+    return { status: r.status, text: await r.text() };
+  }, [pfad, opt]);
+  const dokAnfragen = [];
+  const dokMit = (r) => { if (/rpc\/dokument_|\/storage\/v1\//.test(r.url())) dokAnfragen.push(`${r.method()} ${new URL(r.url()).pathname.replace(/[0-9a-f-]{36}/g, "ID")}`); };
+  p.on("request", dokMit);
+
+  await anmelden("chef@solarmaa.ch"); await p.waitForSelector(".plant");
+  await oeffne(A); await p.waitForSelector("#pDoku:not([hidden])");
+  await p.waitForSelector("#dokHinweis:not([hidden])");
+  ok("Solarmaa ohne Zwei-Faktor: Hinweis in der Karte Dokumente", /Zwei-Faktor/.test(await p.textContent("#dokHinweis")));
+  ok("Standard beim Hochladen: nur Solarmaa, Hinweis zu Passwörtern und GPS", (await p.inputValue("#dokNeuSichtbar")) === "false" && /Passwörter.*GPS/.test(await p.textContent("#fDok")));
+  await hochladen({ name: "Schema.pdf", mimeType: "application/pdf", buffer: PDF }, "Schema");
+  await dokFehlerText(/Zwei-Faktor-Anmeldung nötig/);
+  ok("ohne Zwei-Faktor: Hochladen abgelehnt mit Zwei-Faktor-Hinweis", true);
+  erwartet(/^403 POST \/rest\/v1\/rpc\/dokument_anlegen/, "… von der Datenbank abgelehnt");
+  ok("… nichts angelegt, nichts hochgeladen", sql("select count(*) from public.dokumente") === "0" && !dokAnfragen.some((a) => /storage/.test(a)));
+  await p.fill("#mfaCode", "424242"); await p.tap("#fMfa button[type=submit]"); await p.waitForSelector("#mfaOk:not([hidden])");
+  await p.waitForFunction(() => document.getElementById("dokHinweis").hidden && /Noch keine Dokumente/.test(document.getElementById("dokListe").textContent));
+  ok("nach Zwei-Faktor: Hinweis weg, Liste neu geladen", true);
+
+  // SVG und HTML: im Browser (Inhalt geprüft, nicht Endung), per RPC und per Storage abgewiesen
+  for (const [datei, was] of [[{ name: "bild.svg", mimeType: "image/svg+xml", buffer: SVG }, "SVG"], [{ name: "seite.html", mimeType: "text/html", buffer: HTML }, "HTML"],
+    [{ name: "getarnt.png", mimeType: "image/png", buffer: HTML }, "HTML mit Endung .png"]]) {
+    dokAnfragen.length = 0;
+    await hochladen(datei, was);
+    await dokFehlerText(/Nur PDF, JPEG, PNG oder WebP/);
+    ok(`${was} im Browser abgewiesen, ohne Anfrage`, dokAnfragen.length === 0, JSON.stringify(dokAnfragen));
+  }
+  r = await direkt("/rest/v1/rpc/dokument_anlegen", { p_anlage: aId, p_titel: "x", p_kategorie: "foto", p_dateiname: "x.svg", p_typ: "image/svg+xml", p_groesse: 10 });
+  ok("SVG per RPC abgelehnt", r.status === 400 && /Nur PDF/.test(r.d.message), JSON.stringify(r));
+  erwartet(/^400 POST \/rest\/v1\/rpc\/dokument_anlegen/, "… als Fehlantwort gesehen");
+  const resv = (await direkt("/rest/v1/rpc/dokument_anlegen", { p_anlage: aId, p_titel: "Reserviert", p_kategorie: "foto", p_dateiname: "x.png", p_typ: "image/png", p_groesse: 100 })).d;
+  for (const [typ, inhalt] of [["image/svg+xml", SVG], ["text/html", HTML]]) {
+    const rr = await roh(`/storage/v1/object/anlagedoku/${resv.pfad}`, { method: "POST", body: inhalt.toString(), headers: { "Content-Type": typ, "x-upsert": "false" } });
+    ok(`${typ} per Storage-POST auf reservierten Pfad abgewiesen`, rr.status === 400 && /"415"/.test(rr.text), JSON.stringify(rr));
+    erwartet(/^400 POST \/storage\/v1\/object\/anlagedoku\//, "… als Fehlantwort gesehen");
+  }
+  ok("… nichts im Bucket", sql(`select count(*) from storage.objects where name = '${resv.pfad}'`) === "0");
+  sql("delete from public.dokumente where titel = 'Reserviert'");
+
+  // PDF «nur Solarmaa» und PNG «auch für Kunde»
+  dokAnfragen.length = 0;
+  await hochladen({ name: "Schema Haus:1?.pdf", mimeType: "application/pdf", buffer: PDF }, "Prinzipschema");
+  await dokZeile("Prinzipschema").waitFor();
+  ok("Hochladen: anlegen, Datei senden, fertigstellen", JSON.stringify(dokAnfragen) === JSON.stringify(["POST /rest/v1/rpc/dokument_anlegen", "POST /storage/v1/object/anlagedoku/ID/ID.pdf", "POST /rest/v1/rpc/dokument_fertig"]), JSON.stringify(dokAnfragen));
+  ok("… Meldung und leeres Formular", /hochgeladen/.test(await p.textContent("#dokMsg")) && (await p.inputValue("#dokNeuTitel")) === "" && (await p.inputValue("#dokNeuSichtbar")) === "false");
+  await hochladen({ name: "Dach.png", mimeType: "image/png", buffer: PNG }, "Foto Dach", "true");
+  await dokZeile("Foto Dach").waitFor();
+  ok("PDF: Pill «nur Solarmaa»", /nur Solarmaa/.test(await dokZeile("Prinzipschema").textContent()));
+  ok("PNG: Pill «für Kunde»", /für Kunde/.test(await dokZeile("Foto Dach").textContent()));
+  ok("in der Datenbank: beide fertig, Grösse aus dem Speicher",
+    sql("select string_agg(titel || ':' || status || ':' || groesse || ':' || sichtbar_kunde, ',' order by titel) from public.dokumente") === `Foto Dach:fertig:${PNG.length}:true,Prinzipschema:fertig:${PDF.length}:false`);
+  const pngPfad = sql("select pfad from public.dokumente where titel = 'Foto Dach'"), pdfPfad = sql("select pfad from public.dokumente where titel = 'Prinzipschema'");
+  await dokTitel("Foto Dach").tap();
+  await p.waitForFunction(() => { const i = document.getElementById("dokBild"); return !i.hidden && i.complete && i.naturalWidth > 0; });
+  ok("PNG-Vorschau aus einer Blob-Adresse", (await p.getAttribute("#dokBild", "src")).startsWith("blob:"));
+  await pruefen("Dokument mit Vorschau");
+  await dokTitel("Prinzipschema").tap();
+  ok("PDF: keine Vorschau, Bild der vorherigen Auswahl entfernt", (await p.isHidden("#dokBild")) && (await p.getAttribute("#dokBild", "src")) === null);
+  const [dl] = await Promise.all([p.waitForEvent("download"), p.tap("#dokLaden")]);
+  ok("Herunterladen: gleiche Bytes", fs.readFileSync(await dl.path()).equals(PDF));
+  ok("Herunterladen: bereinigter Dateiname", dl.suggestedFilename() === "Schema Haus_1_.pdf", dl.suggestedFilename());
+  ok("Herunterladen: keine neue Seite, kein iframe/object/embed", ctx.pages().length === 1 && (await p.locator("iframe, object, embed").count()) === 0 && new URL(p.url()).pathname === "/");
+  // umbenennen, Sichtbarkeit wechseln
+  await p.fill("#dokTitel", "Prinzipschema Haus"); await p.selectOption("#dokSichtbar", "true"); await p.tap("#dokSpeichern");
+  await p.waitForFunction(() => /Prinzipschema Haus.*für Kunde/s.test(document.getElementById("dokListe").textContent));
+  ok("umbenannt und für Kunde freigegeben", sql("select titel || ':' || sichtbar_kunde from public.dokumente where pfad = '" + pdfPfad + "'") === "Prinzipschema Haus:true");
+  await p.selectOption("#dokSichtbar", "false"); await p.tap("#dokSpeichern");
+  await p.waitForFunction(() => [...document.querySelectorAll("#dokListe li")].some((li) => /Prinzipschema Haus/.test(li.textContent) && /nur Solarmaa/.test(li.textContent)));
+  ok("wieder «nur Solarmaa»", sql("select sichtbar_kunde from public.dokumente where pfad = '" + pdfPfad + "'") === "f");
+  await pruefen("Dokument bearbeiten");
+
+  // Abgebrochenes Hochladen: Eintrag «unvollständig», Fertigstellen scheitert, Löschen geht
+  await p.route("**/storage/v1/object/anlagedoku/**", (route) => (route.request().method() === "POST" ? route.abort() : route.continue()));
+  await hochladen({ name: "Abbruch.pdf", mimeType: "application/pdf", buffer: PDF }, "Abbruch");
+  await dokFehlerText(/nicht angenommen.*unvollständig/);
+  await p.unroute("**/storage/v1/object/anlagedoku/**");
+  await p.waitForFunction(() => [...document.querySelectorAll("#dokListe li")].some((li) => /Abbruch/.test(li.textContent) && /unvollständig/.test(li.textContent)));
+  ok("abgebrochenes Hochladen: Eintrag «unvollständig»", sql("select status from public.dokumente where titel = 'Abbruch'") === "hochladen");
+  await dokTitel("Abbruch").tap();
+  ok("unvollständig: Fertigstellen und Löschen angeboten, kein Herunterladen", (await p.isVisible("#dokFertig")) && (await p.isVisible("#dokLoeschen")) && (await p.isHidden("#dokLaden")));
+  await p.tap("#dokFertig");
+  await dokFehlerText(/Datei fehlt/);
+  ok("Fertigstellen ohne Datei: Meldung", true);
+  erwartet(/^400 POST \/rest\/v1\/rpc\/dokument_fertig/, "… von der Datenbank abgelehnt");
+  await dokTitel("Abbruch").tap();
+  await zweimal("#dokLoeschen");
+  await p.waitForFunction(() => !/Abbruch/.test(document.getElementById("dokListe").textContent));
+  ok("unvollständiger Eintrag gelöscht", sql("select count(*) from public.dokumente where titel = 'Abbruch'") === "0");
+
+  // Löschen eines fertigen Dokuments: erst beim zweiten Tippen
+  await hochladen({ name: "weg.pdf", mimeType: "application/pdf", buffer: PDF }, "Loeschtest");
+  await dokZeile("Loeschtest").waitFor();
+  const wegPfad = sql("select pfad from public.dokumente where titel = 'Loeschtest'");
+  await dokTitel("Loeschtest").tap();
+  await p.tap("#dokLoeschen"); await p.waitForTimeout(500);
+  ok("einmal tippen fragt nur nach", /Wirklich/.test(await p.textContent("#dokLoeschen")) && sql("select status from public.dokumente where titel = 'Loeschtest'") === "fertig");
+  dokAnfragen.length = 0;
+  await p.tap("#dokLoeschen");
+  await p.waitForFunction(() => !/Loeschtest/.test(document.getElementById("dokListe").textContent));
+  ok("zweites Tippen löscht Zeile und Datei", sql("select count(*) from public.dokumente where titel = 'Loeschtest'") === "0" && sql(`select count(*) from storage.objects where name = '${wegPfad}'`) === "0");
+  ok("… in der Reihenfolge beginnen, Datei, Zeile", JSON.stringify(dokAnfragen) === JSON.stringify(["POST /rest/v1/rpc/dokument_loeschen_beginnen", "DELETE /storage/v1/object/anlagedoku", "POST /rest/v1/rpc/dokument_loeschen"]), JSON.stringify(dokAnfragen));
+  ok("… Detail geschlossen, Rückfrage zurückgesetzt", (await p.isHidden("#dokDetail")) && (await p.textContent("#dokLoeschen")) === "Löschen");
+
+  // Wettläufe: verspätete Liste von A erscheint nie bei B
+  const langsamDok = new RegExp("/rest/v1/dokumente\\?.*" + aId);
+  await p.route(langsamDok, async (route) => { await new Promise((res) => setTimeout(res, 2500)); await route.continue().catch(() => {}); });
+  await zurListe(); await oeffne(A); await zurListe(); await oeffne(B);
+  await p.waitForFunction(() => /Noch keine Dokumente/.test(document.getElementById("dokListe").textContent));
+  await p.waitForTimeout(3000);                      // die verspätete Liste von A ist jetzt da
+  await p.unroute(langsamDok);
+  ok("verspätete Dokumentliste von A erscheint nicht bei B", !/Prinzipschema|Foto Dach/.test(await p.textContent("#dokListe")) && (await p.textContent("#pName")) === B);
+  // Bild von A lädt noch, Wechsel zu B: nichts davon bei B
+  await zurListe(); await oeffne(A); await dokTitel("Foto Dach").waitFor();
+  const langsamDatei = /\/storage\/v1\/object\/authenticated\/anlagedoku\//;
+  let dateiAntworten = 0;
+  const zaehleDatei = (resp) => { if (langsamDatei.test(resp.url())) dateiAntworten++; };
+  p.on("response", zaehleDatei);
+  await p.route(langsamDatei, async (route) => { await new Promise((res) => setTimeout(res, 2000)); await route.continue().catch(() => {}); });
+  await dokTitel("Foto Dach").tap();
+  await zurListe(); await oeffne(B);
+  await p.waitForTimeout(2800);
+  ok("Bild von A lädt, Wechsel zu B: kein Bild, kein Detail bei B", (await p.getAttribute("#dokBild", "src")) === null && (await p.isHidden("#dokDetail")));
+  // Abmelden, während ein Bild lädt
+  await zurListe(); await oeffne(A); await dokTitel("Foto Dach").waitFor();
+  dateiAntworten = 0;
+  await dokTitel("Foto Dach").tap();
+  await p.tap("#logout"); await p.waitForSelector("#vLogin:not([hidden])");
+  await p.waitForTimeout(2800);
+  await p.unroute(langsamDatei);
+  p.off("response", zaehleDatei);
+  const dokRest = () => p.evaluate(() => ({ bild: document.getElementById("dokBild").getAttribute("src"), link: document.getElementById("dokLink").getAttribute("href"),
+    liste: document.getElementById("dokListe").textContent, detail: document.getElementById("dokDetail").hidden, karte: document.getElementById("pDoku").hidden,
+    html: document.documentElement.outerHTML, felder: ["dokTitel", "dokNeuTitel", "dokDatei"].map((id) => document.getElementById(id).value).join("") }));
+  let dr = await dokRest();
+  ok("Abmelden während ein Bild lädt: kein Bild, keine Liste, keine Blob-Adresse",
+    dr.bild === null && dr.link === null && dr.liste === "" && dr.detail && dr.karte && !/blob:|Foto Dach|Prinzipschema/.test(dr.html) && dr.felder === "", JSON.stringify({ ...dr, html: undefined }));
+  // Abmelden während des Hochladens: kein dokument_fertig danach
+  await anmelden("chef@solarmaa.ch"); await p.waitForSelector(".plant");
+  await oeffne(A); await p.waitForSelector("#fMfa:not([hidden])");
+  await p.fill("#mfaCode", "424242"); await p.tap("#fMfa button[type=submit]"); await p.waitForSelector("#mfaOk:not([hidden])");
+  await dokTitel("Foto Dach").waitFor();
+  const langsamHoch = /\/storage\/v1\/object\/anlagedoku\//;
+  let hochGesehen = false;
+  await p.route(langsamHoch, async (route) => { hochGesehen = true; await new Promise((res) => setTimeout(res, 2000)); await route.continue().catch(() => {}); });
+  dokAnfragen.length = 0;
+  await hochladen({ name: "spaet.pdf", mimeType: "application/pdf", buffer: PDF }, "Abmelden beim Hochladen");
+  for (let i = 0; i < 50 && !hochGesehen; i++) await p.waitForTimeout(100);
+  ok("das Hochladen läuft", hochGesehen);
+  await p.tap("#logout"); await p.waitForSelector("#vLogin:not([hidden])");
+  await p.waitForTimeout(3000);
+  await p.unroute(langsamHoch);
+  ok("Abmelden während des Hochladens: kein dokument_fertig", !dokAnfragen.some((a) => /dokument_fertig/.test(a)), JSON.stringify(dokAnfragen));
+  ok("… Eintrag bleibt «unvollständig», keine Datei", sql("select status from public.dokumente where titel = 'Abmelden beim Hochladen'") === "hochladen"
+    && sql("select count(*) from storage.objects o join public.dokumente d on d.pfad = o.name where d.titel = 'Abmelden beim Hochladen'") === "0");
+  dr = await dokRest();
+  ok("… nichts von den Dokumenten im Dokument", dr.liste === "" && dr.karte && dr.felder === "" && !/Foto Dach|Abmelden beim Hochladen/.test(dr.html));
+  sql("delete from public.dokumente where titel = 'Abmelden beim Hochladen'");
+  p.off("request", dokMit);
+  antworten.splice(0, antworten.length, ...antworten.filter((a) => !/^401 /.test(a)));
+
   // ---------------------------------------------------------------- Ablauf 3: Kunde und fremdes Konto
   for (const [mail, wer] of [["kunde@example.ch", "Kunde"], ["fremd@example.ch", "Fremder"]]) {
     await anmelden(mail);
@@ -358,8 +541,56 @@ function piRunde(token, ordner = piDir) {
     r = await direkt("/rest/v1/rpc/anlage_loeschen", { p_anlage: aId });
     ok(`${wer}: kann keine Anlage löschen`, r.status === 403, JSON.stringify(r));
     erwartet(/^403 POST \/rest\/v1\/rpc\/anlage_loeschen/, `${wer}: Löschen abgelehnt`);
+    // Anlagedoku: Kunde sieht nur das Freigegebene, Fremder nichts
+    let rr = await roh(`/storage/v1/object/authenticated/anlagedoku/${pdfPfad}`);
+    ok(`${wer}: internes Dokument per Storage nicht abrufbar`, rr.status === 400 && /"404"/.test(rr.text), JSON.stringify(rr));
+    erwartet(/^400 GET \/storage\/v1\/object\/authenticated\/anlagedoku\//, `${wer}: Abruf abgelehnt`);
+    rr = await roh(`/storage/v1/object/public/anlagedoku/${pngPfad}`);
+    ok(`${wer}: kein öffentlicher Abruf`, rr.status === 400, JSON.stringify(rr));
+    erwartet(/^400 GET \/storage\/v1\/object\/public\//, `${wer}: öffentlicher Abruf abgelehnt`);
+    r = await direkt("/rest/v1/rpc/dokument_aendern", { p_id: sql(`select id from public.dokumente where pfad = '${pdfPfad}'`), p_sichtbar: true });
+    ok(`${wer}: kann keine Freigabe setzen`, r.status === 403, JSON.stringify(r));
+    erwartet(/^403 POST \/rest\/v1\/rpc\/dokument_aendern/, `${wer}: Freigabe abgelehnt`);
+    if (wer === "Kunde") {
+      await p.waitForSelector("#pDoku:not([hidden])");
+      const liste = await p.textContent("#dokListe");
+      ok("Kunde: sieht nur das freigegebene Dokument, ohne Formular und Bearbeiten", /Foto Dach/.test(liste) && !/Prinzipschema/.test(liste)
+        && (await p.isHidden("#fDok")) && !/nur Solarmaa|für Kunde/.test(liste));
+      await dokTitel("Foto Dach").tap();
+      await p.waitForFunction(() => { const i = document.getElementById("dokBild"); return !i.hidden && i.complete && i.naturalWidth > 0; });
+      ok("Kunde: Vorschau des freigegebenen Bildes, nichts zum Bearbeiten", await p.isHidden("#dokBearbeiten"));
+      await pruefen("Kunde mit Dokument");
+      // Solarmaa nimmt die Freigabe zurück, während der Kunde die Liste offen hat
+      await p.tap("#dokZu");
+      sql(`update public.dokumente set sichtbar_kunde = false where pfad = '${pngPfad}'`);
+      await dokTitel("Foto Dach").tap();
+      await dokFehlerText(/nicht mehr freigegeben/);
+      ok("Kunde: nach dem Wechsel auf «nur Solarmaa» scheitert der Abruf", (await p.getAttribute("#dokBild", "src")) === null);
+      erwartet(/^400 GET \/storage\/v1\/object\/authenticated\/anlagedoku\//, "Kunde: Abruf nach Rücknahme abgelehnt");
+      await p.waitForFunction(() => !/Foto Dach/.test(document.getElementById("dokListe").textContent));
+      ok("… das Dokument verschwindet aus der Liste, die Meldung bleibt sichtbar", await p.isVisible("#dokErr"));
+      sql(`update public.dokumente set sichtbar_kunde = true where pfad = '${pngPfad}'`);
+      await p.tap("#back"); await dokTitel("Foto Dach").tap();          // eine Anlage: öffnet sich von selbst wieder
+      await p.waitForFunction(() => { const i = document.getElementById("dokBild"); return !i.hidden && i.complete && i.naturalWidth > 0; });
+      await p.evaluate(() => { window.__dokBlob = document.getElementById("dokBild").src; });
+    } else {
+      ok("Fremder: keine Karte Dokumente", await p.isHidden("#pDoku"));
+      r = await direkt(`/rest/v1/dokumente?select=id,titel&anlage_id=eq.${aId}`);
+      ok("Fremder: sieht keine Dokumente", r.status === 200 && r.d.length === 0, JSON.stringify(r));
+      rr = await roh(`/storage/v1/object/authenticated/anlagedoku/${pngPfad}`);
+      ok("Fremder: freigegebenes Bild einer fremden Anlage nicht abrufbar", rr.status === 400, JSON.stringify(rr));
+      erwartet(/^400 GET \/storage\/v1\/object\/authenticated\/anlagedoku\//, "Fremder: Abruf abgelehnt");
+    }
     await pruefen(`Ansicht ${wer}`);
     await abmelden();
+    if (wer === "Kunde") {
+      const z = await p.evaluate(async () => {
+        // als Bild laden (fetch auf blob: verbietet die CSP): freigegebene Adresse liefert einen Fehler
+        const lesbar = await new Promise((res) => { const i = new Image(); i.onload = () => res(true); i.onerror = () => res(false); i.src = window.__dokBlob; });
+        return { src: document.getElementById("dokBild").getAttribute("src"), html: document.documentElement.outerHTML, lesbar };
+      });
+      ok("Kunde abgemeldet: Bild entfernt, Blob-Adresse freigegeben", z.src === null && !/blob:|Foto Dach/.test(z.html) && !z.lesbar, JSON.stringify({ src: z.src, lesbar: z.lesbar }));
+    }
   }
   ok("beide Anlagen bestehen noch", sql("select count(*) from public.anlagen") === "2");
   await wieFrisch("nach dem Abmelden eines Kunden");
