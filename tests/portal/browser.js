@@ -477,6 +477,14 @@ function piRunde(token, ordner = piDir) {
   await p.waitForTimeout(3000);                      // die verspätete Liste von A ist jetzt da
   await p.unroute(langsamDok);
   ok("verspätete Dokumentliste von A erscheint nicht bei B", !/Prinzipschema|Foto Dach/.test(await p.textContent("#dokListe")) && (await p.textContent("#pName")) === B);
+  // Datenbank ohne Anlagedoku (Tabelle fehlt): nur die Karte fällt aus
+  await p.route(/\/rest\/v1\/dokumente\?/, (route) => route.fulfill({ status: 404, contentType: "application/json", body: '{"code":"42P01","message":"relation \\"public.dokumente\\" does not exist"}' }));
+  await zurListe(); await oeffne(A);
+  await p.waitForFunction(() => /nicht verfügbar/.test(document.getElementById("dokHinweis").textContent));
+  ok("Tabelle fehlt: «Dokumente nicht verfügbar», kein Formular, Rest der Anlage intakt",
+    (await p.isVisible("#pDoku")) && (await p.isHidden("#fDok")) && (await p.isHidden("#dokErr")) && (await p.locator("#pNow .tile").count()) > 0 && (await p.isVisible("#pFern")));
+  await p.unroute(/\/rest\/v1\/dokumente\?/);
+  erwartet(/^404 GET \/rest\/v1\/dokumente/, "… die Abfrage lieferte wirklich 404");
   // Bild von A lädt noch, Wechsel zu B: nichts davon bei B
   await zurListe(); await oeffne(A); await dokTitel("Foto Dach").waitFor();
   const langsamDatei = /\/storage\/v1\/object\/authenticated\/anlagedoku\//;

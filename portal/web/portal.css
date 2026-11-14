@@ -94,3 +94,4 @@ select:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 .dok-detail p { overflow-wrap: anywhere; }
 .dok-bild { display: block; max-width: 100%; height: auto; max-height: 60vh; border-radius: 10px; margin: 10px 0; background: #fff; }
 #dokFelder { display: grid; gap: 8px; }
+#dokBearbeiten { margin-top: 14px; }
