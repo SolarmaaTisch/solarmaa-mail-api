@@ -90,6 +90,7 @@ select:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 .dok .pill { margin-right: 6px; }
 .btn.dok-titel { max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
 .dok-detail { border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; background: var(--bg); min-width: 0; }
+.dok-detail:focus { outline: none; } .dok-detail:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 .dok-detail h3 { margin-top: 0; overflow-wrap: anywhere; }
 .dok-detail p { overflow-wrap: anywhere; }
 .dok-bild { display: block; max-width: 100%; height: auto; max-height: 60vh; border-radius: 10px; margin: 10px 0; background: #fff; }

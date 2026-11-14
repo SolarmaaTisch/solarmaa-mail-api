@@ -464,13 +464,13 @@
   // Wer was sieht und darf, entscheiden die Datenbank und die Regeln auf dem Storage-Bucket. Wie bei der
   // Fernwartung ist dok.id die einzige Quelle für die Anlage: gesetzt nur in loadDoku(), nachdem
   // loadPlant() die Anlage bestätigt hat. Jede Fortsetzung nach einem await prüft marke und dokId().
-  // dok.abbruch bricht das Laden einer Datei ab, dok.hoch das Hochladen; dok.url ist die Blob-Adresse
+  // dok.vorschau bzw. dok.laden brechen das Laden einer Datei für Vorschau bzw. Herunterladen ab, dok.hoch das Hochladen; dok.url ist die Blob-Adresse
   // der geladenen Datei und wird beim Schliessen, Wechseln und Abmelden freigegeben.
   const TYPEN = { "application/pdf": { endung: "pdf", name: "PDF" }, "image/jpeg": { endung: "jpg", name: "JPEG" }, "image/png": { endung: "png", name: "PNG" }, "image/webp": { endung: "webp", name: "WebP" } };
   const KATEGORIEN = { schema: "Schema", datenblatt: "Datenblatt", foto: "Foto", protokoll: "Protokoll", sonstiges: "Sonstiges" };
   const DOK_MAX = 20 * 1024 * 1024;
   const DOK_COLS = "id,anlage_id,pfad,titel,kategorie,dateiname,typ,groesse,sichtbar_kunde,status,erstellt";
-  const dok = { id: null, liste: [], sel: null, blob: null, url: null, abbruch: null, hoch: null };
+  const dok = { id: null, liste: [], sel: null, blob: null, url: null, vorschau: null, laden: null, hoch: null };
   const dokId = () => (dok.id && dok.id === anlage && anlage === current ? dok.id : null);
   const typBekannt = (t) => Object.prototype.hasOwnProperty.call(TYPEN, t);
   const istBild = (t) => typBekannt(t) && t !== "application/pdf";
@@ -499,8 +499,8 @@
     showErr("dokErr", e);
   }
   function dokDetailLeeren() {
-    if (dok.abbruch) dok.abbruch.abort();
-    dok.abbruch = null; dok.sel = null; dok.blob = null;
+    for (const k of ["vorschau", "laden"]) { if (dok[k]) dok[k].abort(); dok[k] = null; }
+    dok.sel = null; dok.blob = null;
     if (dok.url) URL.revokeObjectURL(dok.url);
     dok.url = null;
     $("dokBild").removeAttribute("src"); $("dokBild").hidden = true;
@@ -581,27 +581,35 @@
     $("dokTitel").value = d.titel; $("dokKategorie").value = d.kategorie; $("dokSichtbar").value = d.sichtbar_kunde ? "true" : "false";
     dokDetailZeigen();
     $("dokDetail").hidden = false;
+    // in langen Listen liegt das Detail sonst ausserhalb des Sichtbereichs (Handy)
+    const ruhig = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    $("dokDetail").scrollIntoView({ block: "start", behavior: ruhig ? "auto" : "smooth" });
+    $("dokDetail").focus({ preventScroll: true });
     if (d.status === "fertig" && istBild(d.typ)) dokVorschau(d).catch((e) => dokLadeFehler(m, id, e));
   }
   // Datei holen (nie über eine Adresse im Dokument, immer mit der Sitzung). Den Typ des Blobs bestimmt die
   // eigene Liste, nie der Server: So entsteht daraus nur ein Bild oder ein PDF zum Herunterladen.
-  async function dokDatei(d) {
+  // zweck: "vorschau" oder "laden"; jeder Zweck hat seinen eigenen Abbruch, damit «Herunterladen» eine
+  // laufende Vorschau nicht abbricht. Beide bricht dokDetailLeeren() ab (Wechsel, Schliessen, Abmelden).
+  async function dokDatei(d, zweck) {
     const id = dokId(), m = marke;
     if (!id || d.anlage_id !== id || dok.sel?.id !== d.id || !typBekannt(d.typ)) throw veraltet();
     if (dok.blob) return dok.blob;
-    if (dok.abbruch) dok.abbruch.abort();
+    if (dok[zweck]) dok[zweck].abort();
     const ac = new AbortController();
-    dok.abbruch = ac;
+    dok[zweck] = ac;
     const r = await speicher(`/storage/v1/object/authenticated/anlagedoku/${pfadUrl(d.pfad)}`, { signal: ac.signal, cache: "no-store" });
     const daten = await r.arrayBuffer();
     if (m !== marke || dokId() !== id || dok.sel?.id !== d.id || ac.signal.aborted) throw veraltet();
-    dok.abbruch = null;
-    dok.blob = new Blob([daten], { type: d.typ });
-    dok.url = URL.createObjectURL(dok.blob);
+    if (dok[zweck] === ac) dok[zweck] = null;
+    if (!dok.blob) {                                       // der andere Zweck kann schneller gewesen sein
+      dok.blob = new Blob([daten], { type: d.typ });
+      dok.url = URL.createObjectURL(dok.blob);
+    }
     return dok.blob;
   }
   async function dokVorschau(d) {
-    await dokDatei(d);
+    await dokDatei(d, "vorschau");
     if (dok.sel?.id !== d.id || !dok.url) return;
     $("dokBild").src = dok.url; $("dokBild").hidden = false;
   }
@@ -613,7 +621,7 @@
   // Name zum Speichern: ohne Steuer-, Richtungs- und in Dateisystemen verbotene Zeichen, mit passender Endung
   function dateiName(d) {
     const t = TYPEN[d.typ];
-    let n = String(d.dateiname || "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩/\\:*?"<>|]/g, "_")
+    let n = String(d.dateiname || "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069/\\:*?"<>|]/g, "_")
       .replace(/^[.\s]+|[.\s]+$/g, "").slice(0, 120);
     if (!n) n = "dokument";
     const endung = n.includes(".") ? n.split(".").pop().toLowerCase() : "";
@@ -626,7 +634,7 @@
     if (!id || !d || d.anlage_id !== id || d.status !== "fertig") return;
     $("dokErr").hidden = true;
     try {
-      await dokDatei(d);
+      await dokDatei(d, "laden");
       if (m !== marke || dokId() !== id || dok.sel?.id !== d.id || !dok.url) return;
       // Herunterladen über einen Link mit download-Attribut: keine Anzeige im Browser, keine Navigation
       const a = $("dokLink");

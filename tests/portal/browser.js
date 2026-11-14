@@ -436,6 +436,26 @@ function piRunde(token, ordner = piDir) {
   await p.waitForFunction(() => [...document.querySelectorAll("#dokListe li")].some((li) => /Prinzipschema Haus/.test(li.textContent) && /nur Solarmaa/.test(li.textContent)));
   ok("wieder «nur Solarmaa»", sql("select sichtbar_kunde from public.dokumente where pfad = '" + pdfPfad + "'") === "f");
   await pruefen("Dokument bearbeiten");
+  // Lange Liste (Handy): das geöffnete Detail kommt in den Sichtbereich und erhält den Fokus
+  sql(`insert into public.dokumente (anlage_id, pfad, titel, dateiname, typ, groesse, status) select '${aId}', '${aId}/' || gen_random_uuid() || '.pdf', 'Fuellung ' || i, 'f.pdf', 'application/pdf', 10, 'fertig' from generate_series(1, 15) i`);
+  await zurListe(); await oeffne(A); await dokTitel("Fuellung 15").waitFor();
+  await p.evaluate(() => window.scrollTo(0, 0));
+  await p.locator("#dokListe button.dok-titel").first().tap();
+  await p.waitForFunction(() => { const r = document.getElementById("dokDetail").getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight - 40; }, null, { timeout: 5000 });
+  ok("lange Liste: Detail im Sichtbereich", true);
+  ok("… und mit Fokus", (await p.evaluate(() => document.activeElement && document.activeElement.id)) === "dokDetail");
+  await p.tap("#dokZu");
+  sql("delete from public.dokumente where titel like 'Fuellung %'");
+  await zurListe(); await oeffne(A); await dokTitel("Foto Dach").waitFor();
+  // «Herunterladen», während die Vorschau noch lädt: beide kommen an
+  const bildLangsam = /\/storage\/v1\/object\/authenticated\/anlagedoku\//;
+  await p.route(bildLangsam, async (route) => { await new Promise((res) => setTimeout(res, 1500)); await route.continue().catch(() => {}); });
+  await dokTitel("Foto Dach").tap();
+  const [dlBild] = await Promise.all([p.waitForEvent("download", { timeout: 10000 }), p.tap("#dokLaden")]);
+  await p.waitForFunction(() => { const i = document.getElementById("dokBild"); return !i.hidden && i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+  await p.unroute(bildLangsam);
+  ok("Herunterladen während der Vorschau: Vorschau erscheint, Datei mit gleichen Bytes", fs.readFileSync(await dlBild.path()).equals(PNG) && dlBild.suggestedFilename() === "Dach.png", dlBild.suggestedFilename());
+  await p.tap("#dokZu");
 
   // Abgebrochenes Hochladen: Eintrag «unvollständig», Fertigstellen scheitert, Löschen geht
   await p.route("**/storage/v1/object/anlagedoku/**", (route) => (route.request().method() === "POST" ? route.abort() : route.continue()));
